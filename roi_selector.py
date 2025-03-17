@@ -332,7 +332,7 @@ def run_roi_selector_standalone():
             roi_points, roi_image = selector.get_roi()
             if roi_points and roi_image is not None:
                 cv.imshow("Extracted ROI", roi_image)
-                return roi_points, roi_image
+        
     
     cv.destroyAllWindows()
     return None, None

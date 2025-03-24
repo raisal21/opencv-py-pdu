@@ -2,7 +2,7 @@ import cv2 as cv
 import numpy as np
 import argparse
 
-class BackgroundSubtractor:
+class ForegroundExtraction:
     """
     Advanced background subtraction implementation using OpenCV's MOG2 algorithm
     with configurable parameters and morphological operations.
@@ -246,6 +246,305 @@ class BackgroundSubtractor:
         
         print("Background model reset")
 
+class ContourProcessor:
+    """
+    Class for processing contours from binary masks to analyze material coverage.
+    Designed to work with output from ForegroundExtraction class and ROI selector.
+    
+    Focuses on analyzing all detected material contours, calculating coverage metrics,
+    and providing visualization tools for analysis.
+    """
+    
+    def __init__(self, 
+                 min_contour_area=100,       # Minimum area to consider a contour valid
+                 use_convex_hull=True,        # Whether to use convex hull for more solid representation
+                 merge_overlapping=False,     # Whether to merge overlapping contours
+                 merge_distance=10,           # Maximum distance to consider contours for merging
+                 contour_color=(0, 255, 0),   # Color for drawing contours (BGR)
+                 hull_color=(0, 200, 255),    # Color for drawing convex hulls (BGR)
+                 text_color=(0, 0, 255),      # Color for text information (BGR)
+                 show_contour_index=False,    # Display index number on each contour
+                 show_contour_area=False):    # Display area value on each contour
+        """
+        Initialize the ContourProcessor with specific parameters.
+        
+        Args:
+            min_contour_area: Minimum area (in pixels) to consider a contour valid
+            use_convex_hull: Whether to apply convex hull to found contours
+            merge_overlapping: Whether to merge contours that are close to each other
+            merge_distance: Maximum distance for merging contours (if merge_overlapping is True)
+            contour_color: BGR color for drawing contours
+            hull_color: BGR color for drawing convex hulls
+            text_color: BGR color for drawing text information
+            show_contour_index: Whether to display contour index on visualization
+            show_contour_area: Whether to display contour area on visualization
+        """
+        # Store parameters
+        self.min_contour_area = min_contour_area
+        self.use_convex_hull = use_convex_hull
+        self.merge_overlapping = merge_overlapping
+        self.merge_distance = merge_distance
+        
+        # Visualization parameters
+        self.contour_color = contour_color
+        self.hull_color = hull_color
+        self.text_color = text_color
+        self.show_contour_index = show_contour_index
+        self.show_contour_area = show_contour_area
+    
+    def process_mask(self, binary_mask, roi_contour=None):
+        """
+        Process a binary mask to find, filter, and analyze contours.
+        
+        Args:
+            binary_mask: Binary mask from background subtraction (0 for background, 255 for foreground)
+            roi_contour: Optional contour defining the region of interest
+            
+        Returns:
+            Tuple of (processed_mask, contours, metrics)
+            - processed_mask: The binary mask after contour processing
+            - contours: List of filtered and processed contours
+            - metrics: Dictionary with coverage statistics and measurements
+        """
+        # Make a copy of the binary mask and ensure it's binary (0 or 255)
+        mask = binary_mask.copy()
+        if len(mask.shape) > 2:
+            mask = cv.cvtColor(mask, cv.COLOR_BGR2GRAY)
+        _, mask = cv.threshold(mask, 127, 255, cv.THRESH_BINARY)
+        
+        # Apply ROI mask if provided
+        roi_mask = None
+        if roi_contour is not None:
+            roi_mask = np.zeros_like(mask)
+            cv.drawContours(roi_mask, [roi_contour], 0, 255, -1)
+            mask = cv.bitwise_and(mask, mask, mask=roi_mask)
+        
+        # Find contours in the binary mask
+        contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        
+        # Filter contours by minimum area
+        filtered_contours = [cnt for cnt in contours if cv.contourArea(cnt) >= self.min_contour_area]
+        
+        # Process contours (apply convex hull if requested)
+        if self.use_convex_hull:
+            processed_contours = [cv.convexHull(cnt) for cnt in filtered_contours]
+        else:
+            processed_contours = filtered_contours
+        
+        # Merge overlapping contours if requested
+        if self.merge_overlapping and len(processed_contours) > 1:
+            processed_contours = self._merge_close_contours(processed_contours, self.merge_distance)
+        
+        # Create a mask with only the processed contours
+        result_mask = np.zeros_like(mask)
+        cv.drawContours(result_mask, processed_contours, -1, 255, -1)
+        
+        # Calculate metrics
+        metrics = self._calculate_metrics(mask, result_mask, processed_contours, roi_mask)
+        
+        return result_mask, processed_contours, metrics
+    
+    def _merge_close_contours(self, contours, max_distance):
+        """
+        Merge contours that are close to each other.
+        
+        Args:
+            contours: List of contours to potentially merge
+            max_distance: Maximum distance between contours to consider merging
+            
+        Returns:
+            List of merged contours
+        """
+        if not contours:
+            return []
+        
+        # First find bounds of all contours to create an appropriately sized mask
+        all_points = np.vstack([cnt.reshape(-1, 2) for cnt in contours])
+        min_x, min_y = all_points.min(axis=0)
+        max_x, max_y = all_points.max(axis=0)
+        
+        # Add padding for dilation
+        padding = max_distance * 2
+        min_x = max(0, min_x - padding)
+        min_y = max(0, min_y - padding)
+        max_x = max_x + padding
+        max_y = max_y + padding
+        
+        # Create a mask of all contours
+        width = int(max_x - min_x + 1)
+        height = int(max_y - min_y + 1)
+        if width <= 0 or height <= 0:
+            return contours  # Safety check
+            
+        mask = np.zeros((height, width), dtype=np.uint8)
+        
+        # Adjust contour coordinates for the new mask
+        shifted_contours = [cnt - np.array([min_x, min_y]) for cnt in contours]
+        cv.drawContours(mask, shifted_contours, -1, 255, -1)
+        
+        # Dilate the mask to connect close contours
+        kernel = np.ones((max_distance, max_distance), np.uint8)
+        dilated = cv.dilate(mask, kernel, iterations=1)
+        
+        # Find contours in the dilated mask
+        merged_contours_shifted, _ = cv.findContours(dilated, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        
+        # Shift contours back to original coordinates
+        merged_contours = [cnt + np.array([min_x, min_y]) for cnt in merged_contours_shifted]
+        
+        return merged_contours
+    
+    def _calculate_metrics(self, original_mask, processed_mask, contours, roi_mask=None):
+        """
+        Calculate various metrics about the contours and coverage.
+        
+        Args:
+            original_mask: The original binary mask
+            processed_mask: The mask after contour processing
+            contours: List of processed contours
+            roi_mask: Optional ROI mask for calculating percentages
+            
+        Returns:
+            Dictionary with various metrics
+        """
+        # Calculate total area (of ROI or entire image)
+        if roi_mask is not None:
+            total_area = cv.countNonZero(roi_mask)
+        else:
+            total_area = original_mask.shape[0] * original_mask.shape[1]
+        
+        # Calculate areas
+        original_coverage_pixels = cv.countNonZero(original_mask)
+        processed_coverage_pixels = cv.countNonZero(processed_mask)
+        
+        # Calculate individual contour metrics
+        contour_areas = [cv.contourArea(cnt) for cnt in contours]
+        total_contour_area = sum(contour_areas)
+        
+        # Calculate perimeters
+        perimeters = [cv.arcLength(cnt, True) for cnt in contours]
+        
+        # Calculate bounding rectangles
+        bounding_rects = [cv.boundingRect(cnt) for cnt in contours]
+        
+        # Calculate percentages
+        if total_area > 0:
+            original_coverage_percent = (original_coverage_pixels / total_area) * 100
+            processed_coverage_percent = (processed_coverage_pixels / total_area) * 100
+            contour_coverage_percent = (total_contour_area / total_area) * 100
+        else:
+            original_coverage_percent = 0
+            processed_coverage_percent = 0
+            contour_coverage_percent = 0
+        
+        return {
+            'total_pixels': total_area,
+            'original_coverage_pixels': original_coverage_pixels,
+            'processed_coverage_pixels': processed_coverage_pixels,
+            'original_coverage_percent': original_coverage_percent,
+            'processed_coverage_percent': processed_coverage_percent,
+            'contour_coverage_percent': contour_coverage_percent,
+            'contour_count': len(contours),
+            'contour_areas': contour_areas,
+            'total_contour_area': total_contour_area,
+            'perimeters': perimeters,
+            'bounding_rects': bounding_rects
+        }
+    
+    def visualize(self, image, contours, metrics, show_metrics=True, scale_factor=1.0):
+        """
+        Create a visualization of the contours and metrics on the input image.
+        
+        Args:
+            image: Input image to draw visualization on
+            contours: List of contours to visualize
+            metrics: Dictionary of metrics from process_mask
+            show_metrics: Whether to show metrics on the image
+            scale_factor: Scale factor for text size (useful for different resolutions)
+            
+        Returns:
+            Visualization image with contours and information
+        """
+        # Create a copy of the input image
+        vis_image = image.copy()
+        
+        # Draw all contours
+        cv.drawContours(vis_image, contours, -1, self.contour_color, 2)
+        
+        # Draw convex hulls if they're different from original contours
+        if self.use_convex_hull:
+            hulls = [cv.convexHull(cnt) for cnt in contours]
+            cv.drawContours(vis_image, hulls, -1, self.hull_color, 1)
+        
+        # Add contour indices and areas if requested
+        for i, cnt in enumerate(contours):
+            # Find center of contour for text placement
+            M = cv.moments(cnt)
+            if M["m00"] != 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                
+                # Draw index number
+                if self.show_contour_index:
+                    cv.putText(vis_image, f"{i}", (cx, cy), 
+                              cv.FONT_HERSHEY_SIMPLEX, 0.5 * scale_factor, self.text_color, 2)
+                
+                # Draw area
+                if self.show_contour_area:
+                    area = int(cv.contourArea(cnt))
+                    cv.putText(vis_image, f"{area}", (cx, cy + 20), 
+                              cv.FONT_HERSHEY_SIMPLEX, 0.5 * scale_factor, self.text_color, 2)
+        
+        # Add summary metrics
+        if show_metrics:
+            metrics_text = [
+                f"Coverage: {metrics['processed_coverage_percent']:.2f}%",
+                f"Contours: {metrics['contour_count']}",
+                f"Total Area: {metrics['total_contour_area']} px"
+            ]
+            
+            y_pos = 30
+            for text in metrics_text:
+                cv.putText(vis_image, text, (10, y_pos), 
+                          cv.FONT_HERSHEY_SIMPLEX, 0.7 * scale_factor, self.text_color, 2)
+                y_pos += 30
+        
+        return vis_image
+    
+    @staticmethod
+    def create_preset(preset_name="default"):
+        """
+        Create a ContourProcessor with preset parameters for specific material types.
+        
+        Args:
+            preset_name: Name of the preset ('default', 'liquid', 'solid')
+            
+        Returns:
+            Configured ContourProcessor instance
+        """
+        if preset_name == "liquid":
+            # For liquid materials - less strict with small contours, use convex hull
+            return ContourProcessor(
+                min_contour_area=50,
+                use_convex_hull=True,
+                merge_overlapping=True,
+                merge_distance=15,
+                contour_color=(0, 255, 255),  # Yellow for liquids
+            )
+        elif preset_name == "solid":
+            # For solid materials (rocks) - more strict filtering, less merging
+            return ContourProcessor(
+                min_contour_area=200,
+                use_convex_hull=True,
+                merge_overlapping=False,
+                contour_color=(0, 0, 255),  # Red for solids
+            )
+        else:  # default
+            return ContourProcessor(
+                min_contour_area=100,
+                use_convex_hull=True,
+                merge_overlapping=False,
+            )
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -394,7 +693,7 @@ def main():
     source = int(args.source) if args.source.isdigit() else args.source
     
     # Create background subtractor instance
-    bg_subtractor = BackgroundSubtractor(
+    bg_subtractor = ForegroundExtraction(
         # MOG2 parameters
         history=args.history,
         var_threshold=args.var_threshold,

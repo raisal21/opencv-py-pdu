@@ -1,414 +1,723 @@
 import cv2 as cv
 import numpy as np
 import argparse
-import time
 
-
-class ForegroundExtractor:
+class ForegroundExtraction:
     """
-    Kelas yang mengimplementasikan ekstraksi foreground menggunakan algoritma MOG2.
-    
-    Kelas ini menyediakan:
-    1. Inisialisasi dan konfigurasi background subtractor MOG2
-    2. Pemrosesan frame untuk ekstraksi mask foreground
-    3. Opsi penggunaan frame grayscale untuk optimasi
-    4. Operasi morfologi untuk memperbaiki hasil deteksi
+    Advanced background subtraction implementation using OpenCV's MOG2 algorithm
+    with configurable parameters and morphological operations.
     """
     
-    def __init__(self, history=500, var_threshold=16, detect_shadows=True, 
-                 use_grayscale=False, learning_rate=0.01, 
-                 use_morphology=False, kernel_size=7, morph_iterations=2):
+    def __init__(self, 
+                 # MOG2 parameters
+                 history=500,
+                 var_threshold=20, # 
+                 detect_shadows=True,
+                 nmixtures=5,  # Number of Gaussian components per background pixel
+                 background_ratio=0.9,  # Background ratio threshold
+                 # Learning rate parameters
+                 learning_rate=0.01,
+                 # Pre-processing morphological operation
+                 pre_process=None,  # 'open', 'close', 'dilate', 'erode', or None
+                 pre_kernel_size=5,
+                 pre_iterations=1,
+                 # Post-processing morphological operation 
+                 post_process=None,  # 'open', 'close', 'dilate', 'erode', or None
+                 post_kernel_size=5,
+                 post_iterations=1,
+                 # Display parameters
+                 show_original=True,
+                 show_mask=True,
+                 show_result=True):
         """
-        Inisialisasi foreground extractor dengan parameter MOG2.
+        Initialize the background subtractor with configurable parameters.
         
         Args:
-            history (int): Jumlah frame yang digunakan untuk membangun model background
-            var_threshold (float): Threshold pada jarak Mahalanobis kuadrat untuk menentukan
-                                  apakah suatu piksel termasuk background atau tidak
-            detect_shadows (bool): Jika True, algoritma mendeteksi bayangan
-            use_grayscale (bool): Jika True, frame dikonversi ke grayscale sebelum diproses
-            learning_rate (float): Kecepatan adaptasi model background (0-1, atau -1 untuk otomatis)
-            use_morphology (bool): Jika True, operasi morfologi closing diterapkan pada mask
-            kernel_size (int): Ukuran kernel untuk operasi morfologi
-            morph_iterations (int): Jumlah iterasi untuk operasi morfologi
+            history: Number of frames to use for background model
+            var_threshold: Threshold for foreground/background decision
+            detect_shadows: Whether to detect shadows separately
+            nmixtures: Number of Gaussian components per background pixel (3-7 typical)
+            background_ratio: Threshold that defines whether a component is background or not (0-1)
+            learning_rate: How fast the background model is updated (0-1)
+            pre_process: Morphological operation before background subtraction
+            pre_kernel_size: Kernel size for pre-processing operations
+            pre_iterations: Number of iterations for pre-processing
+            post_process: Morphological operation after background subtraction
+            post_kernel_size: Kernel size for post-processing operations
+            post_iterations: Number of iterations for post-processing
+            show_original: Whether to show the original frame
+            show_mask: Whether to show the foreground mask
+            show_result: Whether to show the result with foreground highlighted
         """
-        # Inisialisasi MOG2 background subtractor
+        # Initialize parameters
+        self.history = history
+        self.var_threshold = var_threshold
+        self.detect_shadows = detect_shadows
+        self.nmixtures = nmixtures
+        self.background_ratio = background_ratio
+        self.learning_rate = learning_rate
+        
+        # Morphological parameters
+        self.pre_process = pre_process
+        self.pre_kernel_size = pre_kernel_size
+        self.pre_iterations = pre_iterations
+        self.post_process = post_process
+        self.post_kernel_size = post_kernel_size
+        self.post_iterations = post_iterations
+        
+        # Display parameters
+        self.show_original = show_original
+        self.show_mask = show_mask
+        self.show_result = show_result
+        
+        # Create BackgroundSubtractorMOG2 object
         self.bg_subtractor = cv.createBackgroundSubtractorMOG2(
-            history=history,
-            varThreshold=var_threshold,
-            detectShadows=detect_shadows
+            history=self.history,
+            varThreshold=self.var_threshold,
+            detectShadows=self.detect_shadows
         )
         
-        # Parameter untuk referensi
-        self.history = history
-        self.var_threshold = var_threshold
-        self.detect_shadows = detect_shadows
-        self.use_grayscale = use_grayscale
-        self.learning_rate = learning_rate
+        # Set additional parameters using setters
+        self.bg_subtractor.setNMixtures(self.nmixtures)
+        self.bg_subtractor.setBackgroundRatio(self.background_ratio)
         
-        # Parameter morfologi
-        self.use_morphology = use_morphology
-        self.kernel_size = kernel_size
-        self.morph_iterations = morph_iterations
-        self.kernel = cv.getStructuringElement(
-            cv.MORPH_ELLIPSE, 
-            (self.kernel_size, self.kernel_size)
-        )
+        # Create morphological kernels
+        self.pre_kernel = np.ones((self.pre_kernel_size, self.pre_kernel_size), np.uint8)
+        self.post_kernel = np.ones((self.post_kernel_size, self.post_kernel_size), np.uint8)
+        
+        # Window names
+        self.window_names = []
+        if self.show_original:
+            self.window_names.append("Original")
+        if self.show_mask:
+            self.window_names.append("Foreground Mask")
+        if self.show_result:
+            self.window_names.append("Result")
     
-    def extract(self, frame):
+    def apply_morphological_ops(self, image, morph_type, kernel, iterations):
         """
-        Ekstraksi foreground dari frame input.
+        Apply morphological operations to an image or mask.
         
         Args:
-            frame (numpy.ndarray): Frame input
+            image: The image or mask to process
+            morph_type: Type of morphological operation ('open', 'close', 'dilate', 'erode', or None)
+            kernel: The kernel to use for the operation
+            iterations: Number of iterations to apply the operation
             
         Returns:
-            numpy.ndarray: Mask foreground (0=background, 255=foreground)
+            Processed image or mask after morphological operations
         """
-        # Buat salinan frame untuk memastikan frame asli tidak dimodifikasi
-        process_frame = frame.copy()
+        if morph_type is None:
+            return image
         
-        # Konversi ke grayscale jika diperlukan
-        if self.use_grayscale:
-            gray = cv.cvtColor(process_frame, cv.COLOR_BGR2GRAY)
-            # Konversi kembali ke BGR agar kompatibel dengan MOG2
-            process_frame = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
-        
-        # Terapkan background subtraction dengan learning rate yang ditentukan
-        fg_mask = self.bg_subtractor.apply(process_frame, learningRate=self.learning_rate)
-        
-        # Jika shadows dideteksi, konversi nilai bayangan (127) ke hitam (0)
-        if self.detect_shadows:
-            # Dalam MOG2 dengan detect_shadows=True, bayangan ditandai dengan 127
-            binary_mask = cv.threshold(fg_mask, 127, 255, cv.THRESH_BINARY)[1]
+        if morph_type == 'open':
+            return cv.morphologyEx(image, cv.MORPH_OPEN, kernel, iterations=iterations)
+        elif morph_type == 'close':
+            return cv.morphologyEx(image, cv.MORPH_CLOSE, kernel, iterations=iterations)
+        elif morph_type == 'dilate':
+            return cv.dilate(image, kernel, iterations=iterations)
+        elif morph_type == 'erode':
+            return cv.erode(image, kernel, iterations=iterations)
         else:
-            binary_mask = fg_mask
-        
-        # Terapkan operasi morfologi jika diaktifkan
-        if self.use_morphology:
-            # Closing: dilasi diikuti erosi (mengisi lubang)
-            binary_mask = cv.morphologyEx(
-                binary_mask, 
-                cv.MORPH_CLOSE, 
-                self.kernel, 
-                iterations=self.morph_iterations
-            )
-        
-        return binary_mask
+            return image
     
-    def visualize(self, frame, mask):
+    def process_frame(self, frame):
         """
-        Buat visualisasi hasil ekstraksi foreground.
+        Process a single frame with background subtraction and morphological operations.
         
         Args:
-            frame (numpy.ndarray): Frame original
-            mask (numpy.ndarray): Mask foreground hasil ekstraksi
+            frame: Input video frame
             
         Returns:
-            numpy.ndarray: Visualisasi hasil (hanya bagian foreground)
+            Tuple of (original frame, foreground mask, result frame)
         """
-        # Terapkan mask ke frame asli untuk hanya menampilkan foreground
-        return cv.bitwise_and(frame, frame, mask=mask)
+        # Create a copy of the original frame
+        original = frame.copy()
+        
+        # Apply pre-processing morphological operations if specified
+        if self.pre_process is not None:
+            # For pre-processing, convert to grayscale first for better results
+            gray_frame = cv.cvtColor(frame, cv.COLOR_BGR2GRAY) if len(frame.shape) > 2 else frame
+            pre_processed = self.apply_morphological_ops(
+                gray_frame, 
+                self.pre_process, 
+                self.pre_kernel, 
+                self.pre_iterations
+            )
+            # Convert back to BGR if needed
+            if len(frame.shape) > 2:
+                pre_processed = cv.cvtColor(pre_processed, cv.COLOR_GRAY2BGR)
+            frame_to_process = pre_processed
+        else:
+            frame_to_process = frame
+            
+        # Apply background subtraction
+        fg_mask = self.bg_subtractor.apply(frame_to_process, learningRate=self.learning_rate)
+        
+        # Apply post-processing morphological operations if specified
+        if self.post_process is not None:
+            processed_mask = self.apply_morphological_ops(
+                fg_mask, 
+                self.post_process, 
+                self.post_kernel, 
+                self.post_iterations
+            )
+        else:
+            processed_mask = fg_mask
+        
+        # Convert to strict binary mask (0 or 255)
+        # This is important especially when shadow detection is on, as it produces gray values
+        binary_mask = cv.threshold(processed_mask, 127, 255, cv.THRESH_BINARY)[1]
+        
+        # Create a clean display version of the foreground mask (for visualization)
+        display_mask = cv.cvtColor(binary_mask, cv.COLOR_GRAY2BGR)
+        
+        # Apply the binary mask to the original frame for the final result
+        result = cv.bitwise_and(original, original, mask=binary_mask)
+        
+        return original, display_mask, result
     
-    def update_parameters(self, history, var_threshold, detect_shadows, use_grayscale,
-                         learning_rate, use_morphology, kernel_size, morph_iterations):
+    def run(self, source=0, width=640, height=480):
         """
-        Update parameter untuk background subtractor.
+        Run background subtraction on a video source.
         
         Args:
-            history (int): Jumlah frame untuk model background
-            var_threshold (float): Threshold sensitivitas deteksi
-            detect_shadows (bool): Apakah deteksi bayangan diaktifkan
-            use_grayscale (bool): Apakah menggunakan grayscale
-            learning_rate (float): Kecepatan adaptasi model background
-            use_morphology (bool): Apakah menggunakan operasi morfologi
-            kernel_size (int): Ukuran kernel morfologi
-            morph_iterations (int): Jumlah iterasi operasi morfologi
+            source: Camera index or video file path
+            width: Desired width for the frames
+            height: Desired height for the frames
         """
-        # Update parameter internal
-        self.history = history
-        self.var_threshold = var_threshold
-        self.detect_shadows = detect_shadows
-        self.use_grayscale = use_grayscale
-        self.learning_rate = learning_rate
-        self.use_morphology = use_morphology
+        # Initialize video capture
+        cap = cv.VideoCapture(source)
         
-        # Update parameter morfologi jika berubah
-        if self.kernel_size != kernel_size:
-            self.kernel_size = kernel_size
-            self.kernel = cv.getStructuringElement(
-                cv.MORPH_ELLIPSE, 
-                (self.kernel_size, self.kernel_size)
-            )
+        # Set camera resolution if using webcam
+        if isinstance(source, int):
+            cap.set(cv.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv.CAP_PROP_FRAME_HEIGHT, height)
         
-        self.morph_iterations = morph_iterations
+        # Check if video source is opened
+        if not cap.isOpened():
+            print(f"Error: Could not open video source {source}")
+            return
         
-        # Buat ulang background subtractor jika parameter MOG2 berubah
-        if (self.bg_subtractor.getHistory() != history or 
-            self.bg_subtractor.getVarThreshold() != var_threshold or
-            self.bg_subtractor.getDetectShadows() != detect_shadows):
-            
-            self.bg_subtractor = cv.createBackgroundSubtractorMOG2(
-                history=history,
-                varThreshold=var_threshold,
-                detectShadows=detect_shadows
-            )
-
-
-def run_parameter_tuning(video_path):
-    """
-    Alat interaktif untuk mengatur parameter ForegroundExtractor.
-    
-    Args:
-        video_path (str): Path ke file video atau indeks kamera (0 untuk kamera default)
+        # Create windows
+        for name in self.window_names:
+            cv.namedWindow(name, cv.WINDOW_NORMAL)
         
-    Returns:
-        bool: True jika berhasil, False jika gagal
-    """
-    # Buat objek video capture
-    try:
-        if isinstance(video_path, str) and video_path.isdigit():
-            cap = cv.VideoCapture(int(video_path))
-        else:
-            cap = cv.VideoCapture(video_path)
-    except:
-        print(f"Error: Tidak dapat membuka sumber video {video_path}")
-        return False
-    
-    # Cek apakah video berhasil dibuka
-    if not cap.isOpened():
-        print(f"Error: Tidak dapat membuka sumber video {video_path}")
-        return False
-    
-    # Buat jendela untuk kontrol dan visualisasi
-    main_window = "Foreground Extraction Tuning"
-    cv.namedWindow(main_window, cv.WINDOW_NORMAL)
-    
-    # Buat panel kontrol di sisi kiri
-    panel_width = 400
-    panel_height = 600
-    
-    # Buat ForegroundExtractor dengan parameter default
-    extractor = ForegroundExtractor(
-        history=200,
-        var_threshold=25,
-        detect_shadows=True,
-        use_grayscale=False,
-        learning_rate=0.01,
-        use_morphology=False,
-        kernel_size=7,
-        morph_iterations=2
-    )
-    
-    # Buat trackbar untuk parameter
-    def nothing(x):
-        pass
-    
-    # Trackbar parameter MOG2 dasar
-    cv.createTrackbar('History', main_window, 200, 1000, nothing)
-    cv.createTrackbar('Var Threshold', main_window, 25, 100, nothing)
-    cv.createTrackbar('Detect Shadows', main_window, 1, 1, nothing)
-    cv.createTrackbar('Use Grayscale', main_window, 0, 1, nothing)
-    
-    # Trackbar parameter tambahan
-    cv.createTrackbar('Learning Rate x100', main_window, 1, 100, nothing)  # x100 untuk presisi lebih baik
-    cv.createTrackbar('Use Morphology', main_window, 0, 1, nothing)
-    cv.createTrackbar('Kernel Size', main_window, 7, 21, nothing)
-    cv.createTrackbar('Morph Iterations', main_window, 2, 10, nothing)
-    
-    # Tambahkan trackbar untuk kontrol video
-    cv.createTrackbar('Pause/Play', main_window, 0, 1, nothing)
-    
-    print("\nForeground Extractor - Parameter Tuning")
-    print("----------------------------------------")
-    print("Kontrol:")
-    print("  - Geser slider untuk mengubah parameter")
-    print("  - Gunakan trackbar 'Pause/Play' untuk menghentikan/melanjutkan video")
-    print("  - Tekan 's' untuk menyimpan parameter saat ini")
-    print("  - Tekan 'q' untuk keluar")
-    
-    # Loop pemrosesan video
-    frame_count = 0
-    
-    while True:
-        # Periksa status pause
-        is_paused = cv.getTrackbarPos('Pause/Play', main_window) == 1
-        
-        # Baca frame jika tidak di-pause
-        if not is_paused:
+        # Main loop
+        while True:
+            # Read a frame
             ret, frame = cap.read()
+            
+            # Break if frame reading failed (end of video)
             if not ret:
-                # Jika sudah mencapai akhir video, mulai dari awal
-                cap.set(cv.CAP_PROP_POS_FRAMES, 0)
-                continue
+                break
             
-            frame_count += 1
-        
-        # Dapatkan nilai parameter dari trackbar
-        history = cv.getTrackbarPos('History', main_window)
-        var_threshold = cv.getTrackbarPos('Var Threshold', main_window)
-        detect_shadows = cv.getTrackbarPos('Detect Shadows', main_window) == 1
-        use_grayscale = cv.getTrackbarPos('Use Grayscale', main_window) == 1
-        
-        # Dapatkan nilai parameter tambahan
-        learning_rate_val = cv.getTrackbarPos('Learning Rate x100', main_window)
-        # Konversi nilai trackbar ke learning rate (0-1)
-        learning_rate = learning_rate_val / 100.0 if learning_rate_val > 0 else -1.0
-        
-        use_morphology = cv.getTrackbarPos('Use Morphology', main_window) == 1
-        kernel_size = cv.getTrackbarPos('Kernel Size', main_window)
-        # Pastikan kernel size selalu ganjil
-        if kernel_size % 2 == 0:
-            kernel_size += 1
-            cv.setTrackbarPos('Kernel Size', main_window, kernel_size)
+            # Process the frame
+            original, fg_mask, result = self.process_frame(frame)
             
-        morph_iterations = cv.getTrackbarPos('Morph Iterations', main_window)
+            # Display the frames
+            if self.show_original:
+                cv.imshow("Original", original)
+            if self.show_mask:
+                cv.imshow("Foreground Mask", fg_mask)
+            if self.show_result:
+                cv.imshow("Result", result)
+            
+            # Exit on 'q' key press
+            if cv.waitKey(1) & 0xFF == ord('q'):
+                break
         
-        # Update parameter
-        extractor.update_parameters(
-            history, var_threshold, detect_shadows, use_grayscale,
-            learning_rate, use_morphology, kernel_size, morph_iterations
+        # Release the video capture and close windows
+        cap.release()
+        cv.destroyAllWindows()
+    
+    def reset_background(self):
+        """Reset the background model."""
+        # Recreate the background subtractor with the same parameters
+        self.bg_subtractor = cv.createBackgroundSubtractorMOG2(
+            history=self.history,
+            varThreshold=self.var_threshold,
+            detectShadows=self.detect_shadows
         )
         
-        # Proses frame
-        mask = extractor.extract(frame)
-        result = extractor.visualize(frame, mask)
+        # Reset additional parameters
+        self.bg_subtractor.setNMixtures(self.nmixtures)
+        self.bg_subtractor.setBackgroundRatio(self.background_ratio)
         
-        # Buat area untuk teks parameter
-        h, w = frame.shape[:2]
+        print("Background model reset")
+
+class ContourProcessor:
+    """
+    Class for processing contours from binary masks to analyze material coverage.
+    Designed to work with output from ForegroundExtraction class and ROI selector.
+    
+    Focuses on analyzing all detected material contours, calculating coverage metrics,
+    and providing visualization tools for analysis.
+    """
+    
+    def __init__(self, 
+                 min_contour_area=100,       # Minimum area to consider a contour valid
+                 use_convex_hull=True,        # Whether to use convex hull for more solid representation
+                 merge_overlapping=False,     # Whether to merge overlapping contours
+                 merge_distance=10,           # Maximum distance to consider contours for merging
+                 contour_color=(0, 255, 0),   # Color for drawing contours (BGR)
+                 hull_color=(0, 200, 255),    # Color for drawing convex hulls (BGR)
+                 text_color=(0, 0, 255),      # Color for text information (BGR)
+                 show_contour_index=False,    # Display index number on each contour
+                 show_contour_area=False):    # Display area value on each contour
+        """
+        Initialize the ContourProcessor with specific parameters.
         
-        # Informasi parameter untuk ditampilkan
-        param_text = [
-            f"Frame: {frame_count}",
-            f"History: {history}",
-            f"Var Threshold: {var_threshold}",
-            f"Detect Shadows: {'Yes' if detect_shadows else 'No'}",
-            f"Use Grayscale: {'Yes' if use_grayscale else 'No'}",
-            f"Learning Rate: {learning_rate:.2f}" if learning_rate > 0 else "Learning Rate: Auto",
-            f"Use Morphology: {'Yes' if use_morphology else 'No'}",
-            f"Kernel Size: {kernel_size}",
-            f"Morph Iterations: {morph_iterations}",
-            f"Coverage: {(np.count_nonzero(mask) / (mask.shape[0] * mask.shape[1]) * 100):.2f}%",
-            "",
-            "Controls:",
-            "s - Save parameters",
-            "q - Quit",
-            "Spacebar - Pause/Play"
-        ]
+        Args:
+            min_contour_area: Minimum area (in pixels) to consider a contour valid
+            use_convex_hull: Whether to apply convex hull to found contours
+            merge_overlapping: Whether to merge contours that are close to each other
+            merge_distance: Maximum distance for merging contours (if merge_overlapping is True)
+            contour_color: BGR color for drawing contours
+            hull_color: BGR color for drawing convex hulls
+            text_color: BGR color for drawing text information
+            show_contour_index: Whether to display contour index on visualization
+            show_contour_area: Whether to display contour area on visualization
+        """
+        # Store parameters
+        self.min_contour_area = min_contour_area
+        self.use_convex_hull = use_convex_hull
+        self.merge_overlapping = merge_overlapping
+        self.merge_distance = merge_distance
         
-        # Buat panel parameter di sisi kiri
-        panel = np.zeros((h, panel_width, 3), dtype=np.uint8)
+        # Visualization parameters
+        self.contour_color = contour_color
+        self.hull_color = hull_color
+        self.text_color = text_color
+        self.show_contour_index = show_contour_index
+        self.show_contour_area = show_contour_area
+    
+    def process_mask(self, binary_mask, roi_contour=None):
+        """
+        Process a binary mask to find, filter, and analyze contours.
         
-        # Tambahkan teks parameter ke panel
-        for i, text in enumerate(param_text):
-            cv.putText(
-                panel,
-                text,
-                (10, 30 + i * 30),
-                cv.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
-                1
+        Args:
+            binary_mask: Binary mask from background subtraction (0 for background, 255 for foreground)
+            roi_contour: Optional contour defining the region of interest
+            
+        Returns:
+            Tuple of (processed_mask, contours, metrics)
+            - processed_mask: The binary mask after contour processing
+            - contours: List of filtered and processed contours
+            - metrics: Dictionary with coverage statistics and measurements
+        """
+        # Make a copy of the binary mask and ensure it's binary (0 or 255)
+        mask = binary_mask.copy()
+        if len(mask.shape) > 2:
+            mask = cv.cvtColor(mask, cv.COLOR_BGR2GRAY)
+        _, mask = cv.threshold(mask, 127, 255, cv.THRESH_BINARY)
+        
+        # Apply ROI mask if provided
+        roi_mask = None
+        if roi_contour is not None:
+            roi_mask = np.zeros_like(mask)
+            cv.drawContours(roi_mask, [roi_contour], 0, 255, -1)
+            mask = cv.bitwise_and(mask, mask, mask=roi_mask)
+        
+        # Find contours in the binary mask
+        contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        
+        # Filter contours by minimum area
+        filtered_contours = [cnt for cnt in contours if cv.contourArea(cnt) >= self.min_contour_area]
+        
+        # Process contours (apply convex hull if requested)
+        if self.use_convex_hull:
+            processed_contours = [cv.convexHull(cnt) for cnt in filtered_contours]
+        else:
+            processed_contours = filtered_contours
+        
+        # Merge overlapping contours if requested
+        if self.merge_overlapping and len(processed_contours) > 1:
+            processed_contours = self._merge_close_contours(processed_contours, self.merge_distance)
+        
+        # Create a mask with only the processed contours
+        result_mask = np.zeros_like(mask)
+        cv.drawContours(result_mask, processed_contours, -1, 255, -1)
+        
+        # Calculate metrics
+        metrics = self._calculate_metrics(mask, result_mask, processed_contours, roi_mask)
+        
+        return result_mask, processed_contours, metrics
+    
+    def _merge_close_contours(self, contours, max_distance):
+        """
+        Merge contours that are close to each other.
+        
+        Args:
+            contours: List of contours to potentially merge
+            max_distance: Maximum distance between contours to consider merging
+            
+        Returns:
+            List of merged contours
+        """
+        if not contours:
+            return []
+        
+        # First find bounds of all contours to create an appropriately sized mask
+        all_points = np.vstack([cnt.reshape(-1, 2) for cnt in contours])
+        min_x, min_y = all_points.min(axis=0)
+        max_x, max_y = all_points.max(axis=0)
+        
+        # Add padding for dilation
+        padding = max_distance * 2
+        min_x = max(0, min_x - padding)
+        min_y = max(0, min_y - padding)
+        max_x = max_x + padding
+        max_y = max_y + padding
+        
+        # Create a mask of all contours
+        width = int(max_x - min_x + 1)
+        height = int(max_y - min_y + 1)
+        if width <= 0 or height <= 0:
+            return contours  # Safety check
+            
+        mask = np.zeros((height, width), dtype=np.uint8)
+        
+        # Adjust contour coordinates for the new mask
+        shifted_contours = [cnt - np.array([min_x, min_y]) for cnt in contours]
+        cv.drawContours(mask, shifted_contours, -1, 255, -1)
+        
+        # Dilate the mask to connect close contours
+        kernel = np.ones((max_distance, max_distance), np.uint8)
+        dilated = cv.dilate(mask, kernel, iterations=1)
+        
+        # Find contours in the dilated mask
+        merged_contours_shifted, _ = cv.findContours(dilated, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        
+        # Shift contours back to original coordinates
+        merged_contours = [cnt + np.array([min_x, min_y]) for cnt in merged_contours_shifted]
+        
+        return merged_contours
+    
+    def _calculate_metrics(self, original_mask, processed_mask, contours, roi_mask=None):
+        """
+        Calculate various metrics about the contours and coverage.
+        
+        Args:
+            original_mask: The original binary mask
+            processed_mask: The mask after contour processing
+            contours: List of processed contours
+            roi_mask: Optional ROI mask for calculating percentages
+            
+        Returns:
+            Dictionary with various metrics
+        """
+        # Calculate total area (of ROI or entire image)
+        if roi_mask is not None:
+            total_area = cv.countNonZero(roi_mask)
+        else:
+            total_area = original_mask.shape[0] * original_mask.shape[1]
+        
+        # Calculate areas
+        original_coverage_pixels = cv.countNonZero(original_mask)
+        processed_coverage_pixels = cv.countNonZero(processed_mask)
+        
+        # Calculate individual contour metrics
+        contour_areas = [cv.contourArea(cnt) for cnt in contours]
+        total_contour_area = sum(contour_areas)
+        
+        # Calculate perimeters
+        perimeters = [cv.arcLength(cnt, True) for cnt in contours]
+        
+        # Calculate bounding rectangles
+        bounding_rects = [cv.boundingRect(cnt) for cnt in contours]
+        
+        # Calculate percentages
+        if total_area > 0:
+            original_coverage_percent = (original_coverage_pixels / total_area) * 100
+            processed_coverage_percent = (processed_coverage_pixels / total_area) * 100
+            contour_coverage_percent = (total_contour_area / total_area) * 100
+        else:
+            original_coverage_percent = 0
+            processed_coverage_percent = 0
+            contour_coverage_percent = 0
+        
+        return {
+            'total_pixels': total_area,
+            'original_coverage_pixels': original_coverage_pixels,
+            'processed_coverage_pixels': processed_coverage_pixels,
+            'original_coverage_percent': original_coverage_percent,
+            'processed_coverage_percent': processed_coverage_percent,
+            'contour_coverage_percent': contour_coverage_percent,
+            'contour_count': len(contours),
+            'contour_areas': contour_areas,
+            'total_contour_area': total_contour_area,
+            'perimeters': perimeters,
+            'bounding_rects': bounding_rects
+        }
+    
+    def visualize(self, image, contours, metrics, show_metrics=True, scale_factor=1.0):
+        """
+        Create a visualization of the contours and metrics on the input image.
+        
+        Args:
+            image: Input image to draw visualization on
+            contours: List of contours to visualize
+            metrics: Dictionary of metrics from process_mask
+            show_metrics: Whether to show metrics on the image
+            scale_factor: Scale factor for text size (useful for different resolutions)
+            
+        Returns:
+            Visualization image with contours and information
+        """
+        # Create a copy of the input image
+        vis_image = image.copy()
+        
+        # Draw all contours
+        cv.drawContours(vis_image, contours, -1, self.contour_color, 2)
+        
+        # Draw convex hulls if they're different from original contours
+        if self.use_convex_hull:
+            hulls = [cv.convexHull(cnt) for cnt in contours]
+            cv.drawContours(vis_image, hulls, -1, self.hull_color, 1)
+        
+        # Add contour indices and areas if requested
+        for i, cnt in enumerate(contours):
+            # Find center of contour for text placement
+            M = cv.moments(cnt)
+            if M["m00"] != 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                
+                # Draw index number
+                if self.show_contour_index:
+                    cv.putText(vis_image, f"{i}", (cx, cy), 
+                              cv.FONT_HERSHEY_SIMPLEX, 0.5 * scale_factor, self.text_color, 2)
+                
+                # Draw area
+                if self.show_contour_area:
+                    area = int(cv.contourArea(cnt))
+                    cv.putText(vis_image, f"{area}", (cx, cy + 20), 
+                              cv.FONT_HERSHEY_SIMPLEX, 0.5 * scale_factor, self.text_color, 2)
+        
+        # Add summary metrics
+        if show_metrics:
+            metrics_text = [
+                f"Coverage: {metrics['processed_coverage_percent']:.2f}%",
+                f"Contours: {metrics['contour_count']}",
+                f"Total Area: {metrics['total_contour_area']} px"
+            ]
+            
+            y_pos = 30
+            for text in metrics_text:
+                cv.putText(vis_image, text, (10, y_pos), 
+                          cv.FONT_HERSHEY_SIMPLEX, 0.7 * scale_factor, self.text_color, 2)
+                y_pos += 30
+        
+        return vis_image
+    
+    @staticmethod
+    def create_preset(preset_name="default"):
+        """
+        Create a ContourProcessor with preset parameters for specific material types.
+        
+        Args:
+            preset_name: Name of the preset ('default', 'liquid', 'solid')
+            
+        Returns:
+            Configured ContourProcessor instance
+        """
+        if preset_name == "liquid":
+            # For liquid materials - less strict with small contours, use convex hull
+            return ContourProcessor(
+                min_contour_area=50,
+                use_convex_hull=True,
+                merge_overlapping=True,
+                merge_distance=15,
+                contour_color=(0, 255, 255),  # Yellow for liquids
             )
-        
-        # Tambahkan visualisasi kernel jika morfologi diaktifkan
-        if use_morphology:
-            kernel_vis_size = 100
-            kernel_vis_y = 30 + len(param_text) * 30 + 20
-            
-            if kernel_vis_y + kernel_vis_size < h:
-                # Buat visualisasi kernel
-                kernel_vis = np.zeros((kernel_vis_size, kernel_vis_size), dtype=np.uint8)
-                
-                # Skalakan kernel untuk visualisasi
-                scale_factor = kernel_vis_size / kernel_size
-                center = kernel_vis_size // 2
-                radius = int(kernel_size * scale_factor / 2)
-                
-                # Gambar lingkaran untuk kernel ellipse
-                cv.circle(kernel_vis, (center, center), radius, 255, -1)
-                
-                # Tambahkan visualisasi kernel ke panel
-                kernel_vis_color = cv.cvtColor(kernel_vis, cv.COLOR_GRAY2BGR)
-                panel[kernel_vis_y:kernel_vis_y+kernel_vis_size, 
-                      panel_width//2-kernel_vis_size//2:panel_width//2+kernel_vis_size//2] = kernel_vis_color
-                
-                cv.putText(
-                    panel,
-                    "Kernel Visualisasi:",
-                    (10, kernel_vis_y - 10),
-                    cv.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255),
-                    1
-                )
-        
-        # Gabungkan panel dan hasil visualisasi
-        display_frame = np.hstack((panel, result))
-        
-        # Resize untuk display jika terlalu besar
-        screen_width, screen_height = 1280, 720
-        if display_frame.shape[1] > screen_width or display_frame.shape[0] > screen_height:
-            scale = min(screen_width / display_frame.shape[1], screen_height / display_frame.shape[0])
-            display_frame = cv.resize(display_frame, (0, 0), fx=scale, fy=scale)
-        
-        # Tampilkan hasil
-        cv.imshow(main_window, display_frame)
-        
-        # Tangani input keyboard
-        key = cv.waitKey(1) & 0xFF
-        
-        if key == ord('q'):
-            break
-        elif key == ord('s'):  # Simpan parameter
-            print("\nParameter saat ini:")
-            print(f"History: {history}")
-            print(f"Var Threshold: {var_threshold}")
-            print(f"Detect Shadows: {detect_shadows}")
-            print(f"Use Grayscale: {use_grayscale}")
-            print(f"Learning Rate: {learning_rate}")
-            print(f"Use Morphology: {use_morphology}")
-            print(f"Kernel Size: {kernel_size}")
-            print(f"Morph Iterations: {morph_iterations}")
-            
-            print("\nKode Python untuk parameter ini:")
-            print(f"extractor = ForegroundExtractor(")
-            print(f"    history={history},")
-            print(f"    var_threshold={var_threshold},")
-            print(f"    detect_shadows={detect_shadows},")
-            print(f"    use_grayscale={use_grayscale},")
-            print(f"    learning_rate={learning_rate},")
-            print(f"    use_morphology={use_morphology},")
-            print(f"    kernel_size={kernel_size},")
-            print(f"    morph_iterations={morph_iterations}")
-            print(f")")
-        elif key == ord(' '):  # Toggle pause dengan spasi
-            new_pause_value = 0 if is_paused else 1
-            cv.setTrackbarPos('Pause/Play', main_window, new_pause_value)
-    
-    # Lepaskan resource
-    cap.release()
-    cv.destroyAllWindows()
-    
-    return True
+        elif preset_name == "solid":
+            # For solid materials (rocks) - more strict filtering, less merging
+            return ContourProcessor(
+                min_contour_area=200,
+                use_convex_hull=True,
+                merge_overlapping=False,
+                contour_color=(0, 0, 255),  # Red for solids
+            )
+        else:  # default
+            return ContourProcessor(
+                min_contour_area=100,
+                use_convex_hull=True,
+                merge_overlapping=False,
+            )
 
-
-def main():
-    """
-    Fungsi utama untuk aplikasi standalone.
-    """
-    parser = argparse.ArgumentParser(description='Foreground Extraction menggunakan MOG2')
-    parser.add_argument('video', help='Path ke file video atau indeks kamera (contoh: 0 untuk kamera default)')
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='Advanced Background Subtraction')
+    
+    # Video source
+    parser.add_argument('--source', type=str, default='0',
+                        help='Video source (camera index or video path). Default: 0 (webcam)')
+    
+    # MOG2 parameters
+    parser.add_argument('--history', type=int, default=500,
+                        help='Number of frames to use for background model. Default: 500')
+    parser.add_argument('--var-threshold', type=float, default=16,
+                        help='Threshold for foreground/background decision. Default: 16')
+    parser.add_argument('--detect-shadows', type=bool, default=True,
+                        help='Whether to detect shadows. Default: True')
+    parser.add_argument('--nmixtures', type=int, default=5,
+                        help='Number of Gaussian components per background pixel (3-7 typical). Default: 5')
+    parser.add_argument('--background-ratio', type=float, default=0.9,
+                        help='Threshold defining whether a component is background (0-1). Default: 0.9')
+    
+    # Learning rate
+    parser.add_argument('--learning-rate', type=float, default=0.01,
+                        help='Learning rate for background model update (0-1). Default: 0.01')
+    
+    # Pre-processing morphological operations
+    parser.add_argument('--pre-process', type=str, default=None, choices=['open', 'close', 'dilate', 'erode', None],
+                        help='Type of morphological operation applied BEFORE background subtraction. Default: None')
+    parser.add_argument('--pre-kernel-size', type=int, default=5,
+                        help='Size of kernel for pre-processing operations. Default: 5')
+    parser.add_argument('--pre-iterations', type=int, default=1,
+                        help='Number of iterations for pre-processing operations. Default: 1')
+                        
+    # Post-processing morphological operations
+    parser.add_argument('--post-process', type=str, default=None, choices=['open', 'close', 'dilate', 'erode', None],
+                        help='Type of morphological operation applied AFTER background subtraction. Default: None')
+    parser.add_argument('--post-kernel-size', type=int, default=5,
+                        help='Size of kernel for post-processing operations. Default: 5')
+    parser.add_argument('--post-iterations', type=int, default=1,
+                        help='Number of iterations for post-processing operations. Default: 1')
+    
+    # Display options
+    parser.add_argument('--hide-original', action='store_true',
+                        help='Hide original frame')
+    parser.add_argument('--hide-mask', action='store_true',
+                        help='Hide foreground mask')
+    parser.add_argument('--hide-result', action='store_true',
+                        help='Hide result frame')
+    
+    # Resolution
+    parser.add_argument('--width', type=int, default=640,
+                        help='Frame width. Default: 640')
+    parser.add_argument('--height', type=int, default=480,
+                        help='Frame height. Default: 480')
+    
+    # Recommended presets
+    parser.add_argument('--preset', type=str, choices=['none', 'shale-day-clear', 'shale-day-rainy', 'shale-night', 'shale-vibration', 'shale-dust'],
+                        help='Use a recommended preset configuration')
     
     args = parser.parse_args()
     
-    # Jalankan parameter tuning
-    success = run_parameter_tuning(args.video)
+    # Apply presets if specified
+    if hasattr(args, 'preset') and args.preset:
+        if args.preset == 'shale-day-clear':
+        # Kondisi siang hari cerah - kontras tinggi, bayangan jelas
+            args.pre_process = 'erode'
+            args.pre_kernel_size = 3
+            args.pre_iterations = 1
+            args.post_process = 'close'
+            args.post_kernel_size = 5
+            args.post_iterations = 2
+            args.var_threshold = 30  # Nilai lebih tinggi karena kontras baik
+            args.detect_shadows = False  # Matikan deteksi bayangan karena bisa mengacaukan deteksi material
+            args.learning_rate = 0.003  # Learning rate rendah untuk stabilitas
+            args.nmixtures = 4  # Lebih sedikit Gaussian karena kondisi stabil
+            args.background_ratio = 0.85
+
+        elif args.preset == 'shale-day-rainy':
+            # Kondisi hujan - kontras rendah, banyak pergerakan air
+            args.pre_process = 'open'
+            args.pre_kernel_size = 5  # Kernel lebih besar untuk mengatasi noise hujan
+            args.pre_iterations = 2
+            args.post_process = 'close'
+            args.post_kernel_size = 7
+            args.post_iterations = 2
+            args.var_threshold = 18  # Lebih rendah untuk mendeteksi objek dengan kontras rendah
+            args.detect_shadows = False
+            args.learning_rate = 0.01  # Learning rate lebih tinggi untuk adaptasi cepat terhadap perubahan
+            args.nmixtures = 6  # Lebih banyak Gaussian untuk menangani variasi akibat hujan
+            args.history = 300  # History lebih pendek untuk adaptasi cepat
+            args.background_ratio = 0.8
+
+        elif args.preset == 'shale-night':
+            # Kondisi malam - pencahayaan buatan, kontras tinggi, bayangan tajam
+            args.pre_process = 'open'
+            args.pre_kernel_size = 3
+            args.pre_iterations = 1
+            args.post_process = 'dilate'  # Dilasi untuk memperluas area deteksi dalam kondisi cahaya kurang
+            args.post_kernel_size = 5
+            args.post_iterations = 1
+            args.var_threshold = 15  # Lebih rendah karena kontras mungkin lebih rendah
+            args.detect_shadows = False
+            args.learning_rate = 0.002  # Sangat rendah untuk stabilitas dalam pencahayaan konsisten
+            args.nmixtures = 3  # Lebih sedikit karena pencahayaan malam cenderung stabil
+            args.background_ratio = 0.9
+
+        elif args.preset == 'shale-vibration':
+            # Kondisi dengan banyak getaran peralatan
+            args.pre_process = 'open'
+            args.pre_kernel_size = 5
+            args.pre_iterations = 1
+            args.post_process = 'close'
+            args.post_kernel_size = 9  # Kernel lebih besar untuk mengatasi fragmentasi deteksi akibat getaran
+            args.post_iterations = 3
+            args.var_threshold = 20
+            args.detect_shadows = False
+            args.learning_rate = 0.015  # Lebih tinggi untuk adaptasi cepat
+            args.nmixtures = 7  # Lebih banyak Gaussian untuk menangani variasi posisi akibat getaran
+            args.history = 200
+            args.background_ratio = 0.75
+
+        elif args.preset == 'shale-dust':
+            # Kondisi dengan banyak debu di udara
+            args.pre_process = 'erode'  # Erosi untuk mengurangi noise debu halus
+            args.pre_kernel_size = 3
+            args.pre_iterations = 2
+            args.post_process = 'open'  # Opening untuk menghilangkan deteksi debu kecil
+            args.post_kernel_size = 5
+            args.post_iterations = 2
+            args.var_threshold = 25
+            args.detect_shadows = False
+            args.learning_rate = 0.008
+            args.nmixtures = 5
+            args.history = 400
+            args.background_ratio = 0.85
+
+    return args
+
+
+def main():
+    """Main function."""
+    # Parse command line arguments
+    args = parse_arguments()
     
-    if not success:
-        print("Operasi gagal. Silakan periksa sumber video Anda.")
-    else:
-        print("Operasi selesai dengan sukses.")
+    # Convert source to int if it's a digit string (camera index)
+    source = int(args.source) if args.source.isdigit() else args.source
+    
+    # Create background subtractor instance
+    bg_subtractor = ForegroundExtraction(
+        # MOG2 parameters
+        history=args.history,
+        var_threshold=args.var_threshold,
+        detect_shadows=args.detect_shadows,
+        nmixtures=args.nmixtures,
+        background_ratio=args.background_ratio,
+        # Learning rate
+        learning_rate=args.learning_rate,
+        # Pre-processing morphological operations
+        pre_process=args.pre_process,
+        pre_kernel_size=args.pre_kernel_size,
+        pre_iterations=args.pre_iterations,
+        # Post-processing morphological operations
+        post_process=args.post_process,
+        post_kernel_size=args.post_kernel_size,
+        post_iterations=args.post_iterations,
+        # Display options
+        show_original=not args.hide_original,
+        show_mask=not args.hide_mask,
+        show_result=not args.hide_result
+    )
+    
+    # Run background subtraction
+    bg_subtractor.run(source, args.width, args.height)
 
 
 if __name__ == "__main__":

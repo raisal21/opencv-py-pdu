@@ -1,125 +1,350 @@
 import cv2 as cv
 import numpy as np
 import argparse
-import os
 import time
-from datetime import datetime
+from roi_selector import ROISelector
+from material_detector import ForegroundExtraction, ContourProcessor, FrameResult, ContourResult
 
-# Import custom modules
-from roi_selector import RectangleROISelector
-from material_detector import ForegroundExtraction
-from material_detector import ContourProcessor
+class MaterialMonitoringApp:
+    """
+    Integrated application for material monitoring that combines:
+    - ROI selection
+    - Background subtraction for foreground extraction
+    - Contour processing for material analysis
+    
+    The application flow:
+    1. Select ROI from video feed
+    2. Apply background subtraction within the ROI
+    3. Analyze material coverage using contour processing
+    4. Display results and metrics
+    """
+    
+    # UI Constants
+    WINDOW_TITLE_MAIN = "Material Monitoring"
+    WINDOW_TITLE_ROI = "Select Monitoring Region"
+    WINDOW_TITLE_ANALYSIS = "Material Analysis"
+    
+    # Text formatting
+    TEXT_COLOR = (0, 0, 255)  # Red (BGR)
+    TEXT_FONT = cv.FONT_HERSHEY_SIMPLEX
+    TEXT_SCALE = 0.7
+    TEXT_THICKNESS = 2
+    
+    # Analysis modes
+    MODE_ROI_SELECTION = 0
+    MODE_MONITORING = 1
+    
+    def __init__(self, source=0, width=1280, height=720,
+                 bg_subtractor_params=None, contour_processor_params=None):
+        """
+        Initialize the integrated application with video source and processing parameters.
+        
+        Args:
+            source: Camera index or video file path
+            width: Desired width for camera/video frames
+            height: Desired height for camera/video frames
+            bg_subtractor_params: Dictionary of parameters for ForegroundExtraction
+            contour_processor_params: Dictionary of parameters for ContourProcessor
+        """
+        # Initialize video parameters
+        self.source = int(source) if str(source).isdigit() else source
+        self.width = width
+        self.height = height
+        
+        # Set default parameters if none provided
+        if bg_subtractor_params is None:
+            bg_subtractor_params = {}
+        if contour_processor_params is None:
+            contour_processor_params = {}
+            
+        # Create processing components (but don't initialize them yet)
+        self.bg_subtractor = ForegroundExtraction(**bg_subtractor_params)
+        self.contour_processor = ContourProcessor(**contour_processor_params)
+        
+        # Initialize state variables
+        self.mode = self.MODE_ROI_SELECTION
+        self.roi_points = None
+        self.roi_image = None
+        self.roi_mask = None
+        self.transform_matrix = None
+        self.inverse_transform_matrix = None
+        
+        # Performance tracking
+        self.last_frame_time = 0
+        self.fps = 0
+        
+        # Initialize video capture
+        self.cap = None
+        
+    def start(self):
+        """Start the application and main processing loop."""
+        # Initialize video capture
+        self.cap = cv.VideoCapture(self.source)
+        
+        # Set camera resolution if using webcam
+        if isinstance(self.source, int):
+            self.cap.set(cv.CAP_PROP_FRAME_WIDTH, self.width)
+            self.cap.set(cv.CAP_PROP_FRAME_HEIGHT, self.height)
+        
+        # Check if video source is opened successfully
+        if not self.cap.isOpened():
+            print(f"Error: Could not open video source {self.source}")
+            return False
+        
+        # Create main window
+        cv.namedWindow(self.WINDOW_TITLE_MAIN, cv.WINDOW_NORMAL)
+        
+        # Start in ROI selection mode
+        self._select_roi()
+        
+        # Main processing loop
+        try:
+            while True:
+                # Calculate FPS
+                current_time = time.time()
+                self.fps = 1 / (current_time - self.last_frame_time) if self.last_frame_time > 0 else 0
+                self.last_frame_time = current_time
+                
+                # Read a frame
+                ret, frame = self.cap.read()
+                
+                # Break if frame reading failed (end of video)
+                if not ret:
+                    print("End of video or error reading frame")
+                    break
+                
+                # Process frame based on current mode
+                if self.mode == self.MODE_ROI_SELECTION:
+                    cv.imshow(self.WINDOW_TITLE_MAIN, frame)
+                    if cv.waitKey(1) & 0xFF == ord('r'):
+                        self._select_roi()
+                
+                elif self.mode == self.MODE_MONITORING:
+                    self._process_monitoring_frame(frame)
+                
+                # Check for key presses
+                key = cv.waitKey(1) & 0xFF
+                if key == ord('q'):  # Quit
+                    break
+                elif key == ord('r'):  # Reset/Re-select ROI
+                    self._select_roi()
+                elif key == ord('b'):  # Reset background model
+                    print("Resetting background model...")
+                    self.bg_subtractor.reset_background()
+                
+        finally:
+            # Clean up resources
+            self.cap.release()
+            cv.destroyAllWindows()
+    
+    def _select_roi(self):
+        """Enter ROI selection mode and handle the ROI selection workflow."""
+        self.mode = self.MODE_ROI_SELECTION
+        
+        # Capture a single frame for ROI selection
+        ret, frame = self.cap.read()
+        if not ret:
+            print("Failed to capture frame for ROI selection")
+            return
+        
+        # Create ROI selector
+        selector = ROISelector(self.WINDOW_TITLE_ROI, frame)
+        
+        # ROI selection loop
+        while True:
+            key = cv.waitKey(20) & 0xFF
+            
+            if key == 27:  # ESC - cancel and exit
+                cv.destroyWindow(self.WINDOW_TITLE_ROI)
+                return
+            
+            elif key == 13 and selector.is_complete():  # ENTER - confirm
+                selector.confirm_selection()
+                
+                # Get ROI and prepare transformation matrices
+                self.roi_points, self.roi_image = selector.get_roi()
+                
+                if self.roi_points and self.roi_image is not None:
+                    # Calculate transformation matrices for future processing
+                    self._calculate_transform_matrices()
+                    
+                    # Switch to monitoring mode
+                    self.mode = self.MODE_MONITORING
+                    cv.destroyWindow(self.WINDOW_TITLE_ROI)
+                    
+                    # Create analysis window
+                    cv.namedWindow(self.WINDOW_TITLE_ANALYSIS, cv.WINDOW_NORMAL)
+                    return
+                    
+            # Allow capture of new frames while in selection mode (for video sources)
+            if isinstance(self.source, str):  # If it's a video file
+                ret, new_frame = self.cap.read()
+                if ret:
+                    selector = ROISelector(self.WINDOW_TITLE_ROI, new_frame)
+    
+    def _calculate_transform_matrices(self):
+        """Calculate transformation matrices for ROI processing."""
+        if len(self.roi_points) != 4:
+            return
+        
+        # Get source points from ROI selection
+        src_pts = np.array(self.roi_points, dtype=np.float32)
+        
+        # Calculate rectangle dimensions for destination points
+        width_1 = np.linalg.norm(np.array(self.roi_points[0]) - np.array(self.roi_points[1]))
+        width_2 = np.linalg.norm(np.array(self.roi_points[2]) - np.array(self.roi_points[3]))
+        height_1 = np.linalg.norm(np.array(self.roi_points[1]) - np.array(self.roi_points[2]))
+        height_2 = np.linalg.norm(np.array(self.roi_points[3]) - np.array(self.roi_points[0]))
+        
+        width = max(int(width_1), int(width_2))
+        height = max(int(height_1), int(height_2))
+        
+        # Define destination points
+        dst_pts = np.array([
+            [0, 0],
+            [width - 1, 0],
+            [width - 1, height - 1],
+            [0, height - 1]
+        ], dtype=np.float32)
+        
+        # Calculate the perspective transformation matrix
+        self.transform_matrix = cv.getPerspectiveTransform(src_pts, dst_pts)
+        
+        # Calculate the inverse transformation matrix (for mapping back to original frame)
+        self.inverse_transform_matrix = cv.getPerspectiveTransform(dst_pts, src_pts)
+        
+        # Create a mask for the ROI in the original frame
+        self.roi_mask = np.zeros((self.height, self.width), dtype=np.uint8)
+        cv.fillPoly(self.roi_mask, [np.array(self.roi_points, dtype=np.int32)], 255)
+    
+    def _process_monitoring_frame(self, frame):
+        """
+        Process a frame in monitoring mode:
+        1. Extract the ROI from the frame
+        2. Apply background subtraction
+        3. Process contours and calculate metrics
+        4. Visualize results
+        
+        Args:
+            frame: Input video frame
+        """
+        # Apply ROI perspective transform
+        warped_roi = cv.warpPerspective(frame, self.transform_matrix, 
+                                        (self.roi_image.shape[1], self.roi_image.shape[0]))
+        
+        # Process the ROI with background subtraction
+        bg_result = self.bg_subtractor.process_frame(warped_roi)
+        
+        # Process the binary mask to find and analyze contours
+        contour_result = self.contour_processor.process_mask(bg_result.binary)
+        
+        # Create visualization with metrics
+        analysis_vis = self.contour_processor.visualize(
+            warped_roi, contour_result.contours, contour_result.metrics
+        )
+        
+        # Draw ROI outline on original frame
+        display_frame = frame.copy()
+        cv.polylines(display_frame, [np.array(self.roi_points, dtype=np.int32)], 
+                    True, (0, 255, 0), 2)
+        
+        # Add metrics text to the original frame
+        self._add_metrics_to_frame(display_frame, contour_result.metrics)
+        
+        # Display frames
+        cv.imshow(self.WINDOW_TITLE_MAIN, display_frame)
+        cv.imshow(self.WINDOW_TITLE_ANALYSIS, analysis_vis)
+    
+    def _add_metrics_to_frame(self, frame, metrics):
+        """Add metrics information to the display frame."""
+        # Format metrics text
+        metrics_text = [
+            f"FPS: {self.fps:.1f}",
+            f"Coverage: {metrics['processed_coverage_percent']:.2f}%",
+            f"Contours: {metrics['contour_count']}",
+            f"Press 'R' to reset ROI",
+            f"Press 'B' to reset background",
+            f"Press 'Q' to quit"
+        ]
+        
+        # Draw semi-transparent background for text
+        text_bg = np.zeros_like(frame)
+        cv.rectangle(text_bg, (10, 10), (300, 40 + 30 * len(metrics_text)), (0, 0, 0), -1)
+        frame = cv.addWeighted(frame, 1, text_bg, 0.6, 0)
+        
+        # Draw text
+        y_pos = 40
+        for text in metrics_text:
+            cv.putText(frame, text, (20, y_pos), self.TEXT_FONT, 
+                      self.TEXT_SCALE, self.TEXT_COLOR, self.TEXT_THICKNESS)
+            y_pos += 30
+
 
 def parse_arguments():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Material Coverage Analysis System')
+    """Parse command line arguments for the application."""
+    parser = argparse.ArgumentParser(description='Material Monitoring Application')
     
     # Video source
     parser.add_argument('--source', type=str, default='0',
                         help='Video source (camera index or video path). Default: 0 (webcam)')
+    
+    # Resolution
     parser.add_argument('--width', type=int, default=1280,
-                        help='Camera width. Default: 1280')
+                        help='Frame width. Default: 1280')
     parser.add_argument('--height', type=int, default=720,
-                        help='Camera height. Default: 720')
+                        help='Frame height. Default: 720')
     
-    # Processing configuration
-    parser.add_argument('--bg-preset', type=str, default='shale-day-clear',
-                        choices=['none', 'shale-day-clear', 'shale-day-rainy', 
-                                'shale-night', 'shale-vibration', 'shale-dust'],
-                        help='Background subtraction preset')
-    parser.add_argument('--material-preset', type=str, default='default',
-                        choices=['default', 'liquid', 'solid'],
-                        help='Material type preset for contour processing')
-    
-    # Output options
-    parser.add_argument('--save-video', action='store_true',
-                        help='Save output video')
-    parser.add_argument('--output-dir', type=str, default='output',
-                        help='Directory to save output files. Default: output')
-    
-    # Display options
-    parser.add_argument('--skip-roi', action='store_true',
-                        help='Skip ROI selection and use full frame')
-    parser.add_argument('--hide-metrics', action='store_true',
-                        help='Hide metrics display on visualization')
+    # Presets
+    parser.add_argument('--preset', type=str, 
+                        choices=['none', 'shale-day-clear', 'shale-day-rainy', 'shale-night', 
+                                'shale-vibration', 'shale-dust'],
+                        default='none',
+                        help='Use a recommended preset configuration')
     
     args = parser.parse_args()
     return args
 
-def select_roi(frame):
-    """
-    Use the RectangleROISelector to select an ROI in the frame.
-    
-    Args:
-        frame: Input video frame
-        
-    Returns:
-        np.ndarray: ROI contour points, or None if selection was canceled
-    """
-    window_name = "Select Material ROI"
-    cv.namedWindow(window_name, cv.WINDOW_NORMAL)
-    
-    # Create selector
-    selector = RectangleROISelector(window_name, frame)
-    
-    print("Select a rectangular ROI for material analysis:")
-    print("  1. Click to place the first point")
-    print("  2. Click to place the second point")
-    print("  3. Click to place the third point (will form a rectangle)")
-    print("  4. Press ENTER to confirm or right-click to reset")
-    print("  5. Press ESC to cancel and use full frame")
-    
-    while True:
-        key = cv.waitKey(20) & 0xFF
-        
-        if key == 27:  # ESC
-            cv.destroyWindow(window_name)
-            return None
-        
-        elif key == 13 and selector.is_complete():  # ENTER
-            selector.confirm_selection()
-            roi_points, _ = selector.get_roi()
-            cv.destroyWindow(window_name)
-            
-            if roi_points:
-                return np.array(roi_points, dtype=np.int32)
-            else:
-                return None
-    
-    return None
 
-def configure_foreground_extraction(preset=None):
+def apply_preset(preset_name):
     """
-    Configure a ForegroundExtraction instance based on the specified preset.
+    Apply a preset configuration.
     
     Args:
-        preset: Name of the preset to apply
+        preset_name: Name of the preset to apply
         
     Returns:
-        ForegroundExtraction: Configured instance
+        Tuple of (bg_subtractor_params, contour_processor_params)
     """
-    # Default parameters
-    params = {
+    # Default background subtractor parameters
+    bg_params = {
         'history': 500,
         'var_threshold': 16,
-        'detect_shadows': False,
+        'detect_shadows': True,
         'nmixtures': 5,
         'background_ratio': 0.9,
         'learning_rate': 0.01,
         'pre_process': None,
         'pre_kernel_size': 5,
         'pre_iterations': 1,
-        'post_process': 'close',  # Default to closing for noise reduction
+        'post_process': None,
         'post_kernel_size': 5,
-        'post_iterations': 2,
-        'show_original': False,
-        'show_mask': False,
-        'show_result': False
+        'post_iterations': 1
+    }
+    
+    # Default contour processor parameters
+    contour_params = {
+        'min_contour_area': 100,
+        'use_convex_hull': True,
+        'merge_overlapping': False,
+        'merge_distance': 10,
+        'show_contour_index': False,
+        'show_contour_area': False
     }
     
     # Apply preset-specific parameters
-    if preset == 'shale-day-clear':
-        params.update({
+    if preset_name == 'shale-day-clear':
+        # Kondisi siang hari cerah - kontras tinggi, bayangan jelas
+        bg_params.update({
             'pre_process': 'erode',
             'pre_kernel_size': 3,
             'pre_iterations': 1,
@@ -127,12 +352,22 @@ def configure_foreground_extraction(preset=None):
             'post_kernel_size': 5,
             'post_iterations': 2,
             'var_threshold': 30,
+            'detect_shadows': False,
             'learning_rate': 0.003,
             'nmixtures': 4,
             'background_ratio': 0.85
         })
-    elif preset == 'shale-day-rainy':
-        params.update({
+        
+        contour_params.update({
+            'min_contour_area': 150,
+            'use_convex_hull': True,
+            'merge_overlapping': True,
+            'merge_distance': 8
+        })
+    
+    elif preset_name == 'shale-day-rainy':
+        # Kondisi hujan - kontras rendah, banyak pergerakan air
+        bg_params.update({
             'pre_process': 'open',
             'pre_kernel_size': 5,
             'pre_iterations': 2,
@@ -140,13 +375,23 @@ def configure_foreground_extraction(preset=None):
             'post_kernel_size': 7,
             'post_iterations': 2,
             'var_threshold': 18,
+            'detect_shadows': False,
             'learning_rate': 0.01,
             'nmixtures': 6,
             'history': 300,
             'background_ratio': 0.8
         })
-    elif preset == 'shale-night':
-        params.update({
+        
+        contour_params.update({
+            'min_contour_area': 200,
+            'use_convex_hull': True,
+            'merge_overlapping': True,
+            'merge_distance': 15
+        })
+    
+    elif preset_name == 'shale-night':
+        # Kondisi malam - pencahayaan buatan, kontras tinggi, bayangan tajam
+        bg_params.update({
             'pre_process': 'open',
             'pre_kernel_size': 3,
             'pre_iterations': 1,
@@ -154,12 +399,21 @@ def configure_foreground_extraction(preset=None):
             'post_kernel_size': 5,
             'post_iterations': 1,
             'var_threshold': 15,
+            'detect_shadows': False,
             'learning_rate': 0.002,
             'nmixtures': 3,
             'background_ratio': 0.9
         })
-    elif preset == 'shale-vibration':
-        params.update({
+        
+        contour_params.update({
+            'min_contour_area': 100,
+            'use_convex_hull': True,
+            'merge_overlapping': False
+        })
+    
+    elif preset_name == 'shale-vibration':
+        # Kondisi dengan banyak getaran peralatan
+        bg_params.update({
             'pre_process': 'open',
             'pre_kernel_size': 5,
             'pre_iterations': 1,
@@ -167,13 +421,23 @@ def configure_foreground_extraction(preset=None):
             'post_kernel_size': 9,
             'post_iterations': 3,
             'var_threshold': 20,
+            'detect_shadows': False,
             'learning_rate': 0.015,
             'nmixtures': 7,
             'history': 200,
             'background_ratio': 0.75
         })
-    elif preset == 'shale-dust':
-        params.update({
+        
+        contour_params.update({
+            'min_contour_area': 250,
+            'use_convex_hull': True,
+            'merge_overlapping': True,
+            'merge_distance': 20
+        })
+    
+    elif preset_name == 'shale-dust':
+        # Kondisi dengan banyak debu di udara
+        bg_params.update({
             'pre_process': 'erode',
             'pre_kernel_size': 3,
             'pre_iterations': 2,
@@ -181,228 +445,48 @@ def configure_foreground_extraction(preset=None):
             'post_kernel_size': 5,
             'post_iterations': 2,
             'var_threshold': 25,
+            'detect_shadows': False,
             'learning_rate': 0.008,
             'nmixtures': 5,
             'history': 400,
             'background_ratio': 0.85
         })
-    
-    # Create and return instance
-    extractor = ForegroundExtraction(**params)
-    return extractor
-
-def setup_output_directory(output_dir):
-    """
-    Setup the output directory for saved files.
-    
-    Args:
-        output_dir: Directory path
         
-    Returns:
-        str: Full path to the output directory
-    """
-    # Create timestamp for unique directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    full_path = os.path.join(output_dir, f"run_{timestamp}")
+        contour_params.update({
+            'min_contour_area': 180,
+            'use_convex_hull': True,
+            'merge_overlapping': True,
+            'merge_distance': 12
+        })
     
-    # Create directory if it doesn't exist
-    os.makedirs(full_path, exist_ok=True)
-    
-    return full_path
+    return bg_params, contour_params
 
-def save_metrics_to_file(metrics, frame_number, output_path):
-    """
-    Save metrics to a CSV file.
-    
-    Args:
-        metrics: Dictionary of metrics
-        frame_number: Current frame number
-        output_path: Directory to save the file
-    """
-    csv_path = os.path.join(output_path, "metrics.csv")
-    
-    # Create header if file doesn't exist
-    if not os.path.exists(csv_path):
-        header = "frame,timestamp,coverage_percent,contour_count,total_area\n"
-        with open(csv_path, 'w') as f:
-            f.write(header)
-    
-    # Append metrics for this frame
-    timestamp = time.time()
-    coverage = metrics['processed_coverage_percent']
-    contour_count = metrics['contour_count']
-    total_area = metrics['total_contour_area']
-    
-    with open(csv_path, 'a') as f:
-        f.write(f"{frame_number},{timestamp},{coverage:.2f},{contour_count},{total_area}\n")
 
 def main():
-    """Main function that integrates all components."""
+    """Main entry point for the application."""
     # Parse command line arguments
     args = parse_arguments()
-    
-    # Setup output directory if saving outputs
-    output_path = None
-    if args.save_video:
-        output_path = setup_output_directory(args.output_dir)
-        print(f"Outputs will be saved to: {output_path}")
     
     # Convert source to int if it's a digit string (camera index)
     source = int(args.source) if args.source.isdigit() else args.source
     
-    # Initialize video capture
-    cap = cv.VideoCapture(source)
+    # Apply preset if specified
+    if args.preset != 'none':
+        print(f"Using preset: {args.preset}")
+        bg_params, contour_params = apply_preset(args.preset)
+    else:
+        bg_params, contour_params = {}, {}
     
-    # Set camera properties if using webcam
-    if isinstance(source, int):
-        cap.set(cv.CAP_PROP_FRAME_WIDTH, args.width)
-        cap.set(cv.CAP_PROP_FRAME_HEIGHT, args.height)
+    # Create and start the application
+    app = MaterialMonitoringApp(
+        source=source,
+        width=args.width,
+        height=args.height,
+        bg_subtractor_params=bg_params,
+        contour_processor_params=contour_params
+    )
     
-    # Check if video source is opened
-    if not cap.isOpened():
-        print(f"Error: Could not open video source {source}")
-        return
-    
-    # Read the first frame for ROI selection
-    ret, first_frame = cap.read()
-    if not ret:
-        print("Error: Could not read from video source")
-        return
-    
-    # Select ROI or use full frame
-    roi_contour = None
-    if not args.skip_roi:
-        roi_contour = select_roi(first_frame)
-        
-    # If ROI selection was skipped or canceled, use full frame
-    if roi_contour is None:
-        h, w = first_frame.shape[:2]
-        roi_contour = np.array([
-            [10, 10],
-            [w-10, 10],
-            [w-10, h-10],
-            [10, h-10]
-        ], dtype=np.int32)
-        print("Using full frame as ROI")
-    
-    # Configure processing components
-    fg_extractor = configure_foreground_extraction(args.bg_preset)
-    contour_processor = ContourProcessor.create_preset(args.material_preset)
-    
-    # Create video writer if saving output
-    video_writer = None
-    if args.save_video:
-        fourcc = cv.VideoWriter_fourcc(*'XVID')
-        output_video_path = os.path.join(output_path, "analysis.avi")
-        frame_size = (first_frame.shape[1], first_frame.shape[0])
-        video_writer = cv.VideoWriter(output_video_path, fourcc, 20.0, frame_size)
-    
-    # Create windows
-    cv.namedWindow("Original", cv.WINDOW_NORMAL)
-    cv.namedWindow("Material Detection", cv.WINDOW_NORMAL)
-    cv.namedWindow("Analysis", cv.WINDOW_NORMAL)
-    
-    # Display information about the configuration
-    print(f"\nSystem Configuration:")
-    print(f"  Background Preset: {args.bg_preset}")
-    print(f"  Material Preset: {args.material_preset}")
-    print(f"  Save Output: {'Yes' if args.save_video else 'No'}")
-    print("\nControls:")
-    print("  R - Reset background model")
-    print("  S - Save current frame")
-    print("  Q - Quit")
-    
-    # Main processing loop
-    frame_number = 0
-    
-    while True:
-        # Read a frame
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        # Process frame with background subtraction
-        _, fg_mask, _ = fg_extractor.process_frame(frame)
-        
-        # Convert mask to grayscale if needed
-        if len(fg_mask.shape) > 2:
-            fg_mask_gray = cv.cvtColor(fg_mask, cv.COLOR_BGR2GRAY)
-        else:
-            fg_mask_gray = fg_mask
-        
-        # Ensure mask is binary
-        _, binary_mask = cv.threshold(fg_mask_gray, 127, 255, cv.THRESH_BINARY)
-        
-        # Process the mask with contour processor
-        processed_mask, contours, metrics = contour_processor.process_mask(binary_mask, roi_contour)
-        
-        # Create visualization
-        show_metrics = not args.hide_metrics
-        analysis_view = contour_processor.visualize(frame, contours, metrics, show_metrics)
-        
-        # Draw the ROI on the analysis view
-        cv.polylines(analysis_view, [roi_contour], True, (255, 0, 0), 2)
-        
-        # Add configuration info
-        cv.putText(analysis_view, f"BG: {args.bg_preset}", 
-                  (10, frame.shape[0] - 50), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 200), 2)
-        cv.putText(analysis_view, f"Material: {args.material_preset}", 
-                  (10, frame.shape[0] - 25), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 200), 2)
-        
-        # Display results
-        cv.imshow("Original", frame)
-        cv.imshow("Material Detection", processed_mask)
-        cv.imshow("Analysis", analysis_view)
-        
-        # Save the frame to output video
-        if video_writer is not None:
-            video_writer.write(analysis_view)
-        
-        # Save metrics to file
-        if output_path is not None:
-            save_metrics_to_file(metrics, frame_number, output_path)
-        
-        # Handle key presses
-        key = cv.waitKey(1) & 0xFF
-        if key == ord('q'):
-            break
-        elif key == ord('r'):
-            fg_extractor.reset_background()
-            print("Background model reset")
-        elif key == ord('s'):
-            # Save current frame analysis
-            if output_path is None:
-                output_path = setup_output_directory(args.output_dir)
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            snapshot_filename = os.path.join(output_path, f"snapshot_{timestamp}.jpg")
-            cv.imwrite(snapshot_filename, analysis_view)
-            
-            # Save metrics snapshot
-            metrics_filename = os.path.join(output_path, f"metrics_{timestamp}.txt")
-            with open(metrics_filename, 'w') as f:
-                f.write(f"Material Analysis Snapshot ({timestamp})\n")
-                f.write(f"Background Preset: {args.bg_preset}\n")
-                f.write(f"Material Preset: {args.material_preset}\n\n")
-                f.write(f"Coverage: {metrics['processed_coverage_percent']:.2f}%\n")
-                f.write(f"Contour Count: {metrics['contour_count']}\n")
-                f.write(f"Total Material Area: {metrics['total_contour_area']} px\n")
-                f.write(f"ROI Area: {metrics['total_pixels']} px\n")
-            
-            print(f"Saved snapshot to {snapshot_filename}")
-        
-        # Update frame counter
-        frame_number += 1
-        
-    # Clean up
-    if video_writer is not None:
-        video_writer.release()
-    cap.release()
-    cv.destroyAllWindows()
-    
-    print("\nProcessing complete")
-    if output_path is not None:
-        print(f"Output saved to: {output_path}")
+    app.start()
 
 
 if __name__ == "__main__":

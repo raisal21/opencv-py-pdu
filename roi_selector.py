@@ -2,7 +2,7 @@ import cv2 as cv
 import numpy as np
 import math
 
-class RectangleROISelector:
+class ROISelector:
     """
     Interactive ROI selector that creates a rectangular selection with perpendicular constraints.
     
@@ -317,7 +317,7 @@ def run_roi_selector_standalone():
     cv.waitKey(1)
     
     # Create selector
-    selector = RectangleROISelector("ROI Selector", frame)
+    selector = ROISelector("ROI Selector", frame)
     
     # Main loop
     while True:

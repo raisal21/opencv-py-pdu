@@ -1,6 +1,10 @@
 import cv2 as cv
 import numpy as np
 import argparse
+from collections import namedtuple
+
+FrameResult = namedtuple('FrameResult', ['original', 'mask', 'binary'])
+ContourResult = namedtuple('ContourResult', ['mask', 'contours', 'metrics'])
 
 class ForegroundExtraction:
     """
@@ -115,10 +119,11 @@ class ForegroundExtraction:
             - binary mask: Binary mask for further processing (grayscale)
         """
         # Create a copy of the original frame
-        original = frame.copy()
+        frame_to_process = frame
         
         # Apply pre-processing morphological operations if specified
         if self.pre_process is not None:
+            frame_to_process = frame.copy()
             # For pre-processing, convert to grayscale first for better results
             gray_frame = cv.cvtColor(frame, cv.COLOR_BGR2GRAY) if len(frame.shape) > 2 else frame
             pre_processed = self.apply_morphological_ops(
@@ -155,7 +160,7 @@ class ForegroundExtraction:
         # Create a clean display version of the foreground mask (for visualization)
         display_mask = cv.cvtColor(binary_mask, cv.COLOR_GRAY2BGR)    
         
-        return original, display_mask, binary_mask
+        return FrameResult(original=frame_to_process, mask=display_mask, binary=binary_mask)
     
     def reset_background(self):
         """Reset the background model."""
@@ -232,12 +237,10 @@ class ContourProcessor:
             - contours: List of filtered and processed contours
             - metrics: Dictionary with coverage statistics and measurements
         """
-        # Make a copy of the binary mask and ensure it's binary (0 or 255)
-        mask = binary_mask.copy()
-        if len(mask.shape) > 2:
-            mask = cv.cvtColor(mask, cv.COLOR_BGR2GRAY)
-        _, mask = cv.threshold(mask, 127, 255, cv.THRESH_BINARY)
-    
+        if len(binary_mask.shape) > 2:
+            mask = cv.cvtColor(binary_mask, cv.COLOR_BGR2GRAY)
+        else:
+            mask = binary_mask
         # Find contours in the binary mask
         contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     
@@ -261,7 +264,7 @@ class ContourProcessor:
         # Calculate metrics
         metrics = self._calculate_metrics(mask, result_mask, processed_contours)
     
-        return result_mask, processed_contours, metrics
+        return ContourResult(mask=result_mask, contours=processed_contours, metrics=metrics)
     
     def _merge_close_contours(self, contours, max_distance):
         """
@@ -332,15 +335,14 @@ class ContourProcessor:
         original_coverage_pixels = cv.countNonZero(original_mask)
         processed_coverage_pixels = cv.countNonZero(processed_mask)
     
-        # Calculate individual contour metrics
-        contour_areas = [cv.contourArea(cnt) for cnt in contours]
+        contour_properties = [(cv.contourArea(cnt), cv.arcLength(cnt, True), cv.boundingRect(cnt)) 
+                            for cnt in contours]
+        
+        contour_areas, perimeters, bounding_rects = zip(*contour_properties) if contour_properties else ([], [], [])
+        contour_areas = np.array(contour_areas)
+        perimeters = np.array(perimeters)
+
         total_contour_area = sum(contour_areas)
-    
-        # Calculate perimeters
-        perimeters = [cv.arcLength(cnt, True) for cnt in contours]
-    
-        # Calculate bounding rectangles
-        bounding_rects = [cv.boundingRect(cnt) for cnt in contours]
     
         # Calculate percentages
         if total_area > 0:
@@ -381,7 +383,10 @@ class ContourProcessor:
             Visualization image with contours and information
         """
         # Create a copy of the input image
-        vis_image = image.copy()
+        if contours or show_metrics:
+            vis_image = image.copy()
+        else:
+            return image
         
         # Draw all contours
         cv.drawContours(vis_image, contours, -1, self.contour_color, 2)

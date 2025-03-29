@@ -22,9 +22,11 @@ class MaterialMonitoringApp:
     # UI Constants
     WINDOW_TITLE_MAIN = "Material Monitoring"
     WINDOW_TITLE_ROI = "Select Monitoring Region"
+    WINDOW_TITLE_FOREGROUND = "Foreground Extraction"  # New window title
     WINDOW_TITLE_ANALYSIS = "Material Analysis"
     
-    # Text formatting
+    # Color constants
+    ROI_COLOR = (0, 149, 255)  # Orange color (BGR format) - same as in ROISelector
     TEXT_COLOR = (0, 0, 255)  # Red (BGR)
     TEXT_FONT = cv.FONT_HERSHEY_SIMPLEX
     TEXT_SCALE = 0.7
@@ -172,7 +174,8 @@ class MaterialMonitoringApp:
                     self.mode = self.MODE_MONITORING
                     cv.destroyWindow(self.WINDOW_TITLE_ROI)
                     
-                    # Create analysis window
+                    # Create analysis windows
+                    cv.namedWindow(self.WINDOW_TITLE_FOREGROUND, cv.WINDOW_NORMAL)  # New window
                     cv.namedWindow(self.WINDOW_TITLE_ANALYSIS, cv.WINDOW_NORMAL)
                     return
                     
@@ -217,6 +220,46 @@ class MaterialMonitoringApp:
         self.roi_mask = np.zeros((self.height, self.width), dtype=np.uint8)
         cv.fillPoly(self.roi_mask, [np.array(self.roi_points, dtype=np.int32)], 255)
     
+    def _apply_aspect_ratio_padding(self, image, target_ratio=16/9):
+        """
+        Apply padding to maintain target aspect ratio.
+        This is the same function used in ROISelector to ensure consistent display.
+        
+        Args:
+            image: Input image to pad
+            target_ratio: Desired width/height ratio (default: 16/9)
+            
+        Returns:
+            Padded image with consistent aspect ratio
+        """
+        height, width = image.shape[:2]
+        current_ratio = width / height if height > 0 else 0
+        
+        if current_ratio > target_ratio:
+            # Too wide - add padding to top and bottom
+            new_width = width
+            new_height = int(width / target_ratio)
+            pad_top = (new_height - height) // 2
+            pad_bottom = new_height - height - pad_top
+            pad_left = 0
+            pad_right = 0
+        else:
+            # Too tall - add padding to left and right
+            new_height = height
+            new_width = int(height * target_ratio)
+            pad_left = (new_width - width) // 2
+            pad_right = new_width - width - pad_left
+            pad_top = 0
+            pad_bottom = 0
+        
+        # Apply padding with consistent color (using the ROI color for consistency)
+        return cv.copyMakeBorder(
+            image,
+            pad_top, pad_bottom, pad_left, pad_right,
+            cv.BORDER_CONSTANT,
+            value=self.ROI_COLOR
+        )
+    
     def _process_monitoring_frame(self, frame):
         """
         Process a frame in monitoring mode:
@@ -232,10 +275,10 @@ class MaterialMonitoringApp:
         warped_roi = cv.warpPerspective(frame, self.transform_matrix, 
                                         (self.roi_image.shape[1], self.roi_image.shape[0]))
         
-        # Process the ROI with background subtraction
+        # Process the ROI with background subtraction - use the full FrameResult
         bg_result = self.bg_subtractor.process_frame(warped_roi)
         
-        # Process the binary mask to find and analyze contours
+        # Process the binary mask to find and analyze contours - use the full ContourResult
         contour_result = self.contour_processor.process_mask(bg_result.binary)
         
         # Create visualization with metrics
@@ -243,17 +286,22 @@ class MaterialMonitoringApp:
             warped_roi, contour_result.contours, contour_result.metrics
         )
         
-        # Draw ROI outline on original frame
+        # Apply consistent aspect ratio padding to all visualization windows
+        analysis_vis_padded = self._apply_aspect_ratio_padding(analysis_vis)
+        foreground_mask_padded = self._apply_aspect_ratio_padding(bg_result.mask)
+        
+        # Draw ROI outline on original frame using the orange ROI_COLOR
         display_frame = frame.copy()
         cv.polylines(display_frame, [np.array(self.roi_points, dtype=np.int32)], 
-                    True, (0, 255, 0), 2)
+                    True, self.ROI_COLOR, 2)  # Changed from green to ROI_COLOR
         
         # Add metrics text to the original frame
         self._add_metrics_to_frame(display_frame, contour_result.metrics)
         
-        # Display frames
+        # Display frames, now including the foreground mask
         cv.imshow(self.WINDOW_TITLE_MAIN, display_frame)
-        cv.imshow(self.WINDOW_TITLE_ANALYSIS, analysis_vis)
+        cv.imshow(self.WINDOW_TITLE_FOREGROUND, foreground_mask_padded)  # New window
+        cv.imshow(self.WINDOW_TITLE_ANALYSIS, analysis_vis_padded)
     
     def _add_metrics_to_frame(self, frame, metrics):
         """Add metrics information to the display frame."""

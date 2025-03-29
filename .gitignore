@@ -1,2 +1,3 @@
-.venv/
-resource/video_sample
+/.venv/
+/resource/video_sample
+/__pycache__/

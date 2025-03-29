@@ -356,7 +356,7 @@ def select_roi_from_frame(frame, window_name="ROI Selector"):
     cv.waitKey(1)
     
     # Create selector
-    selector = RectangleROISelector(window_name, frame)
+    selector = ROISelector(window_name, frame)
     
     # Main loop
     while True:

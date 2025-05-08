@@ -1,21 +1,136 @@
 import cv2 as cv
 import numpy as np
-import argparse
 from collections import namedtuple
 
 FrameResult = namedtuple('FrameResult', ['original', 'mask', 'binary'])
 ContourResult = namedtuple('ContourResult', ['mask', 'contours', 'metrics'])
 
+BG_PRESETS = {
+    "default": {
+        'history': 500,
+        'var_threshold': 16,
+        'detect_shadows': False,
+        'nmixtures': 5,
+        'background_ratio': 0.9,
+        'learning_rate': 0.01,
+        'pre_process': 'erode',
+        'pre_kernel_size': 3,
+        'pre_iterations': 1,
+        'post_process': 'close',
+        'post_kernel_size': 5,
+        'post_iterations': 2
+    },
+    "shale-day-clear": {
+        'history': 500,
+        'pre_process': 'erode',
+        'pre_kernel_size': 3,
+        'pre_iterations': 1,
+        'post_process': 'close',
+        'post_kernel_size': 5,
+        'post_iterations': 2,
+        'var_threshold': 30,
+        'detect_shadows': False,
+        'learning_rate': 0.003,
+        'nmixtures': 4,
+        'background_ratio': 0.85
+    },
+    "shale-day-rainy": {
+        'history': 300,
+        'pre_process': 'open',
+        'pre_kernel_size': 5,
+        'pre_iterations': 2,
+        'post_process': 'close',
+        'post_kernel_size': 7,
+        'post_iterations': 2,
+        'var_threshold': 18,
+        'detect_shadows': False,
+        'learning_rate': 0.01,
+        'nmixtures': 6,
+        'background_ratio': 0.8
+    },
+    "shale-night": {
+        'history': 500,
+        'pre_process': 'open',
+        'pre_kernel_size': 3,
+        'pre_iterations': 1,
+        'post_process': 'dilate',
+        'post_kernel_size': 5,
+        'post_iterations': 1,
+        'var_threshold': 15,
+        'detect_shadows': False,
+        'learning_rate': 0.002,
+        'nmixtures': 3,
+        'background_ratio': 0.9
+    },
+    "shale-vibration": {
+        'history': 200,
+        'pre_process': 'open',
+        'pre_kernel_size': 5,
+        'pre_iterations': 1,
+        'post_process': 'close',
+        'post_kernel_size': 9,
+        'post_iterations': 3,
+        'var_threshold': 20,
+        'detect_shadows': False,
+        'learning_rate': 0.015,
+        'nmixtures': 7,
+        'background_ratio': 0.75
+    },
+    "shale-dust": {
+        'history': 400,
+        'pre_process': 'erode',
+        'pre_kernel_size': 3,
+        'pre_iterations': 2,
+        'post_process': 'open',
+        'post_kernel_size': 5,
+        'post_iterations': 2,
+        'var_threshold': 25,
+        'detect_shadows': False,
+        'learning_rate': 0.008,
+        'nmixtures': 5,
+        'background_ratio': 0.85
+    }
+}
+
+# Contour processing presets - independent from weather conditions
+CONTOUR_PRESETS = {
+    "standard": {
+        'min_contour_area': 100,
+        'use_convex_hull': True,
+        'merge_overlapping': True,
+        'merge_distance': 10,
+        'show_contour_index': False,
+        'show_contour_area': False
+    },
+    "detailed": {
+        'min_contour_area': 50,
+        'use_convex_hull': False,
+        'merge_overlapping': False,
+        'merge_distance': 5,
+        'show_contour_index': True,
+        'show_contour_area': True
+    },
+    "simplified": {
+        'min_contour_area': 200,
+        'use_convex_hull': True,
+        'merge_overlapping': True,
+        'merge_distance': 15,
+        'show_contour_index': False,
+        'show_contour_area': False
+    }
+}
+
 class ForegroundExtraction:
     """
-    Advanced background subtraction implementation using OpenCV's MOG2 algorithm
+    Advanced background subtraction implementation using OpenCV's MOG2
+    algorithm
     with configurable parameters and morphological operations.
     """
-    
+
     def __init__(self, 
                  # MOG2 parameters
                  history=500,
-                 var_threshold=20, # 
+                 var_threshold=20,  # 
                  detect_shadows=True,
                  nmixtures=5,  # Number of Gaussian components per background pixel
                  background_ratio=0.9,  # Background ratio threshold
@@ -415,311 +530,4 @@ class ContourProcessor:
                     cv.putText(vis_image, f"{area}", (cx, cy + 20), 
                               cv.FONT_HERSHEY_SIMPLEX, 0.5 * scale_factor, self.text_color, 2)
         
-        # Add summary metrics
-        if show_metrics:
-            metrics_text = [
-                f"Coverage: {metrics['processed_coverage_percent']:.2f}%",
-                f"Contours: {metrics['contour_count']}",
-                f"Total Area: {metrics['total_contour_area']} px"
-            ]
-            
-            y_pos = 30
-            for text in metrics_text:
-                cv.putText(vis_image, text, (10, y_pos), 
-                          cv.FONT_HERSHEY_SIMPLEX, 0.7 * scale_factor, self.text_color, 2)
-                y_pos += 30
-        
         return vis_image
-
-
-def parse_arguments():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Material Detector dengan Background Subtraction dan Contour Processing')
-    
-    # Video source
-    parser.add_argument('--source', type=str, default='0',
-                        help='Video source (camera index or video path). Default: 0 (webcam)')
-    
-    # Resolution
-    parser.add_argument('--width', type=int, default=640,
-                        help='Frame width. Default: 640')
-    parser.add_argument('--height', type=int, default=480,
-                        help='Frame height. Default: 480')
-    
-    # Presets
-    parser.add_argument('--preset', type=str, 
-                        choices=['none', 'shale-day-clear', 'shale-day-rainy', 'shale-night', 'shale-vibration', 'shale-dust'],
-                        default='none',
-                        help='Use a recommended preset configuration for environment conditions')
-    
-    # MOG2 parameters
-    parser.add_argument('--history', type=int, default=500,
-                        help='Number of frames for background model. Default: 500')
-    parser.add_argument('--var-threshold', type=float, default=16,
-                        help='Threshold for foreground/background decision. Default: 16')
-    parser.add_argument('--detect-shadows', action='store_true', default=True,
-                        help='Whether to detect shadows')
-    parser.add_argument('--no-detect-shadows', action='store_false', dest='detect_shadows',
-                        help='Disable shadow detection')
-    parser.add_argument('--nmixtures', type=int, default=5,
-                        help='Number of Gaussian components per background pixel (3-7 typical). Default: 5')
-    parser.add_argument('--background-ratio', type=float, default=0.9,
-                        help='Threshold for background components (0-1). Default: 0.9')
-    
-    # Learning rate
-    parser.add_argument('--learning-rate', type=float, default=0.01,
-                        help='Learning rate for background model update (0-1). Default: 0.01')
-    
-    # Morphological operations
-    parser.add_argument('--pre-process', type=str, default=None, 
-                        choices=['open', 'close', 'dilate', 'erode', None],
-                        help='Morphological operation BEFORE background subtraction. Default: None')
-    parser.add_argument('--pre-kernel-size', type=int, default=5,
-                        help='Kernel size for pre-processing operations. Default: 5')
-    parser.add_argument('--pre-iterations', type=int, default=1,
-                        help='Number of iterations for pre-processing operations. Default: 1')
-    
-    parser.add_argument('--post-process', type=str, default=None, 
-                        choices=['open', 'close', 'dilate', 'erode', None],
-                        help='Morphological operation AFTER background subtraction. Default: None')
-    parser.add_argument('--post-kernel-size', type=int, default=5,
-                        help='Kernel size for post-processing operations. Default: 5')
-    parser.add_argument('--post-iterations', type=int, default=1,
-                        help='Number of iterations for post-processing operations. Default: 1')
-    
-    # ContourProcessor arguments
-    parser.add_argument('--min-contour-area', type=int, default=100,
-                        help='Minimum contour area to consider valid in pixels. Default: 100')
-    parser.add_argument('--use-convex-hull', action='store_true', default=True,
-                        help='Use convex hull for contours')
-    parser.add_argument('--no-convex-hull', action='store_false', dest='use_convex_hull',
-                        help='Disable convex hull for contours')
-    parser.add_argument('--merge-overlapping', action='store_true', default=False,
-                        help='Merge overlapping contours')
-    parser.add_argument('--merge-distance', type=int, default=10,
-                        help='Distance threshold for merging contours. Default: 10')
-    parser.add_argument('--show-contour-index', action='store_true', default=False,
-                        help='Show contour indices on visualization')
-    parser.add_argument('--show-contour-area', action='store_true', default=False,
-                        help='Show contour areas on visualization')
-    
-    # Display options
-    parser.add_argument('--hide-original', action='store_true',
-                        help='Hide original frame')
-    parser.add_argument('--hide-mask', action='store_true',
-                        help='Hide foreground mask')
-    parser.add_argument('--hide-analysis', action='store_true',
-                        help='Hide contour analysis visualization')
-    
-    args = parser.parse_args()
-    
-    # Apply presets if specified
-    if args.preset != 'none':
-        if args.preset == 'shale-day-clear':
-            # Kondisi siang hari cerah - kontras tinggi, bayangan jelas
-            args.pre_process = 'erode'
-            args.pre_kernel_size = 3
-            args.pre_iterations = 1
-            args.post_process = 'close'
-            args.post_kernel_size = 5
-            args.post_iterations = 2
-            args.var_threshold = 30
-            args.detect_shadows = False
-            args.learning_rate = 0.003
-            args.nmixtures = 4
-            args.background_ratio = 0.85
-            # Contour processing presets for daylight
-            args.min_contour_area = 150
-            args.use_convex_hull = True
-            args.merge_overlapping = True
-            args.merge_distance = 8
-
-        elif args.preset == 'shale-day-rainy':
-            # Kondisi hujan - kontras rendah, banyak pergerakan air
-            args.pre_process = 'open'
-            args.pre_kernel_size = 5
-            args.pre_iterations = 2
-            args.post_process = 'close'
-            args.post_kernel_size = 7
-            args.post_iterations = 2
-            args.var_threshold = 18
-            args.detect_shadows = False
-            args.learning_rate = 0.01
-            args.nmixtures = 6
-            args.history = 300
-            args.background_ratio = 0.8
-            # Contour processing presets for rainy conditions
-            args.min_contour_area = 200
-            args.use_convex_hull = True
-            args.merge_overlapping = True
-            args.merge_distance = 15
-
-        elif args.preset == 'shale-night':
-            # Kondisi malam - pencahayaan buatan, kontras tinggi, bayangan tajam
-            args.pre_process = 'open'
-            args.pre_kernel_size = 3
-            args.pre_iterations = 1
-            args.post_process = 'dilate'
-            args.post_kernel_size = 5
-            args.post_iterations = 1
-            args.var_threshold = 15
-            args.detect_shadows = False
-            args.learning_rate = 0.002
-            args.nmixtures = 3
-            args.background_ratio = 0.9
-            # Contour processing presets for night conditions
-            args.min_contour_area = 100
-            args.use_convex_hull = True
-            args.merge_overlapping = False
-
-        elif args.preset == 'shale-vibration':
-            # Kondisi dengan banyak getaran peralatan
-            args.pre_process = 'open'
-            args.pre_kernel_size = 5
-            args.pre_iterations = 1
-            args.post_process = 'close'
-            args.post_kernel_size = 9
-            args.post_iterations = 3
-            args.var_threshold = 20
-            args.detect_shadows = False
-            args.learning_rate = 0.015
-            args.nmixtures = 7
-            args.history = 200
-            args.background_ratio = 0.75
-            # Contour processing presets for vibration conditions
-            args.min_contour_area = 250
-            args.use_convex_hull = True
-            args.merge_overlapping = True
-            args.merge_distance = 20
-
-        elif args.preset == 'shale-dust':
-            # Kondisi dengan banyak debu di udara
-            args.pre_process = 'erode'
-            args.pre_kernel_size = 3
-            args.pre_iterations = 2
-            args.post_process = 'open'
-            args.post_kernel_size = 5
-            args.post_iterations = 2
-            args.var_threshold = 25
-            args.detect_shadows = False
-            args.learning_rate = 0.008
-            args.nmixtures = 5
-            args.history = 400
-            args.background_ratio = 0.85
-            # Contour processing presets for dusty conditions
-            args.min_contour_area = 180
-            args.use_convex_hull = True
-            args.merge_overlapping = True
-            args.merge_distance = 12
-
-    return args
-
-
-def main():
-    """
-    Main function for running the Material Detector as a standalone application.
-    Integrates ForegroundExtraction and ContourProcessor for complete material analysis.
-    """
-    # Parse command line arguments
-    args = parse_arguments()
-    
-    # Convert source to int if it's a digit string (camera index)
-    source = int(args.source) if args.source.isdigit() else args.source
-    
-    # Create background subtractor instance
-    bg_subtractor = ForegroundExtraction(
-        # MOG2 parameters
-        history=args.history,
-        var_threshold=args.var_threshold,
-        detect_shadows=args.detect_shadows,
-        nmixtures=args.nmixtures,
-        background_ratio=args.background_ratio,
-        # Learning rate
-        learning_rate=args.learning_rate,
-        # Pre-processing morphological operations
-        pre_process=args.pre_process,
-        pre_kernel_size=args.pre_kernel_size,
-        pre_iterations=args.pre_iterations,
-        # Post-processing morphological operations
-        post_process=args.post_process,
-        post_kernel_size=args.post_kernel_size,
-        post_iterations=args.post_iterations
-    )
-    
-    # Create contour processor instance
-    contour_processor = ContourProcessor(
-        min_contour_area=args.min_contour_area,
-        use_convex_hull=args.use_convex_hull,
-        merge_overlapping=args.merge_overlapping,
-        merge_distance=args.merge_distance,
-        show_contour_index=args.show_contour_index,
-        show_contour_area=args.show_contour_area
-    )
-    
-    # Initialize video capture
-    cap = cv.VideoCapture(source)
-    
-    # Set camera resolution if using webcam
-    if isinstance(source, int):
-        cap.set(cv.CAP_PROP_FRAME_WIDTH, args.width)
-        cap.set(cv.CAP_PROP_FRAME_HEIGHT, args.height)
-    
-    # Check if video source is opened
-    if not cap.isOpened():
-        print(f"Error: Could not open video source {source}")
-        return
-    
-    # Create display windows
-    if not args.hide_original:
-        cv.namedWindow("Original", cv.WINDOW_NORMAL)
-    if not args.hide_mask:
-        cv.namedWindow("Foreground Mask", cv.WINDOW_NORMAL)
-    if not args.hide_analysis:
-        cv.namedWindow("Contour Analysis", cv.WINDOW_NORMAL)
-    
-    # Print active preset if using one
-    if args.preset != 'none':
-        print(f"Using preset: {args.preset}")
-    
-    # Main processing loop
-    while True:
-        # Read a frame
-        ret, frame = cap.read()
-        
-        # Break if frame reading failed (end of video)
-        if not ret:
-            print("End of video stream or error reading frame")
-            break
-        
-        # Process the frame with background subtraction
-        original, fg_mask_display, binary_mask = bg_subtractor.process_frame(frame)
-        
-        # Process the binary mask to find and analyze contours
-        _, contours, metrics = contour_processor.process_mask(binary_mask)
-        
-        # Create contour visualization
-        contour_vis = contour_processor.visualize(original, contours, metrics)
-        
-        # Display the frames
-        if not args.hide_original:
-            cv.imshow("Original", original)
-        if not args.hide_mask:
-            cv.imshow("Foreground Mask", fg_mask_display)
-        if not args.hide_analysis:
-            cv.imshow("Contour Analysis", contour_vis)
-        
-        # Handle key presses
-        key = cv.waitKey(1) & 0xFF
-        if key == ord('q'):  # Exit on 'q' key
-            break
-        elif key == ord('r'):  # Reset background model on 'r' key
-            print("Resetting background model...")
-            bg_subtractor.reset_background()
-    
-    # Release resources
-    cap.release()
-    cv.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()

@@ -1,6 +1,6 @@
 import cv2 as cv
 import numpy as np
-import math
+
 
 class ROISelector:
     """
@@ -372,7 +372,7 @@ def select_roi_from_frame(frame, window_name="ROI Selector"):
             if roi_points and roi_image is not None:
                 cv.destroyWindow(window_name)
                 return roi_points, roi_image
-    
+
     cv.destroyWindow(window_name)
     return None, None
 

@@ -1,3 +1,9 @@
 /.venv/
 /resource/video_sample
 /__pycache__/
+/dist
+/build
+/app/__pycache__/
+/app/utils/__pycache__/
+/app/views/__pycache__/
+/app/models/__pycache__/

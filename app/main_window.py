@@ -337,7 +337,7 @@ class CameraItem(QFrame):
             cam.is_preview_mode = True
             if cam.connect():
                 cam.start_stream()
-                if cam.thread:                                        # 𝗻𝗲𝘄
+                if cam.thread:
                     cam.thread.frame_received.connect(self._update_preview_label)
                 self.preview_stream = cam
 
@@ -895,6 +895,24 @@ class MainWindow(QMainWindow):
                 "Camera Not Found",
                 f"Camera with ID {camera_id} not found."
             )
+
+    def showEvent(self, event):
+        """
+        Dipanggil otomatis setiap kali MainWindow muncul kembali.
+        Kembalikan semua preview ke FPS rendah (mode preview).
+        """
+        super().showEvent(event)
+
+        # Iterasi semua item di CameraList
+        layout = self.camera_list.cameras_layout
+        for i in range(layout.count()):
+            item = layout.itemAt(i).widget()
+            if not item:
+                continue
+
+            cam = getattr(item, "preview_stream", None)  # Camera atau None
+            if cam:
+                cam.set_preview_mode(True) 
 
 
 if __name__ == "__main__":

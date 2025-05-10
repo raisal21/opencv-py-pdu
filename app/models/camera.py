@@ -2,8 +2,14 @@ import cv2 as cv
 import numpy as np
 import time
 import json
+import psutil
 from PySide6.QtCore import Qt, QThread, Signal, QMutex, QMutexLocker, QSize
 from PySide6.QtGui import QImage, QPixmap
+
+FPS_PREVIEW = 5            # thumbnail di MainWindow
+FPS_DETAIL  = 15           # jendela CameraDetail aktif
+FPS_IDLE    = 3            # kamera sedang minimised/hidden
+CPU_HIGH_THRESHOLD = 80    # %
 
 
 class Camera:
@@ -230,16 +236,49 @@ class Camera:
         self._roi_M    = cv.getPerspectiveTransform(src_pts, dst_pts)
         self._roi_size = (width, height)
     
-    def process_frame_with_roi(self, frame):
-        """Proses frame dengan ROI jika ditentukan."""
-        if frame is None or self.roi_points is None or len(self.roi_points) < 4:
+    def _prepare_roi_transform(self, frame: np.ndarray) -> None:
+        """
+        Hitung matriks perspektif & ukuran output SATU KALI setelah ROI di‑set.
+
+        Args
+        ----
+        frame : np.ndarray
+            Frame sumber (hanya dipakai untuk ukuran gambar).
+        """
+        if self.roi_points is None or len(self.roi_points) < 4:
+            return  # Tidak cukup titik
+
+        # Sumber & tujuan (sama persis dengan ROISelector.extract_roi)
+        src_pts = np.array(self.roi_points, dtype=np.float32)
+
+        # Estimasi lebar–tinggi ortonormal
+        w1, w2 = np.linalg.norm(src_pts[0] - src_pts[1]), np.linalg.norm(src_pts[2] - src_pts[3])
+        h1, h2 = np.linalg.norm(src_pts[1] - src_pts[2]), np.linalg.norm(src_pts[3] - src_pts[0])
+        width, height = int(max(w1, w2)), int(max(h1, h2))
+
+        dst_pts = np.array(
+            [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+            dtype=np.float32
+        )
+
+        # Simpan ke cache
+        self._roi_M = cv.getPerspectiveTransform(src_pts, dst_pts)
+        self._roi_size = (width, height)
+
+    def process_frame_with_roi(self, frame: np.ndarray) -> np.ndarray:
+        """Apply ROI warp jika sudah disetel dan transform tersedia."""
+        if (
+            frame is None
+            or self.roi_points is None
+            or len(self.roi_points) < 4
+        ):
             return frame
 
-        # Hitung transform sekali saja
+        # Hitung transform hanya pertama kali (atau setelah ROI di‑reset)
         if self._roi_M is None:
             self._prepare_roi_transform(frame)
 
-        # Jika perhitungan gagal
+        # Fallback aman
         if self._roi_M is None or self._roi_size is None:
             return frame
 
@@ -300,6 +339,18 @@ class Camera:
                 pass
         
         return camera
+    
+    def set_preview_mode(self, enable: bool):
+        """
+        Ganti mode preview/detail sambil jalan.
+        """
+        if self.thread is None:
+            return
+        self.is_preview_mode = enable
+        new_fps = FPS_PREVIEW if enable else FPS_DETAIL
+        self.thread.set_target_fps(new_fps)
+
+
 
 
 class CameraThread(QThread):
@@ -322,8 +373,18 @@ class CameraThread(QThread):
         """
         super().__init__()
         self.camera = camera
-        self.running = False
-        self.frame_interval = int(1000 / max(target_fps, 1))
+        self._target_fps = max(1, target_fps)
+        self.frame_interval = int(1000 / self._target_fps)
+        self._frame_counter = 0 
+
+    def set_target_fps(self, fps: int):
+        """
+        Ubah FPS target saat thread sudah berjalan.
+        Akan aman‑thread karena hanya men‑update variabel atomik.
+        """
+        fps = max(1, fps)
+        self._target_fps = fps
+        self.frame_interval = int(1000 / fps)
     
     def run(self):
         """
@@ -370,6 +431,15 @@ class CameraThread(QThread):
                     self.connection_changed.emit(False)
             
             # Interval untuk mengurangi CPU usage
+            self._frame_counter += 1
+
+            # Adaptif: kurangi FPS jika CPU tinggi
+            if self._frame_counter % 15 == 0:
+                cpu_now = psutil.cpu_percent(interval=None)
+                if cpu_now > CPU_HIGH_THRESHOLD and self._target_fps > FPS_IDLE:
+                    self.set_target_fps(max(self._target_fps // 2, FPS_IDLE))
+
+            # Delay agar sesuai target_fps
             self.msleep(self.frame_interval)
     
     def stop(self):

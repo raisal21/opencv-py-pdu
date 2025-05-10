@@ -627,6 +627,7 @@ class CameraDetailUI(QMainWindow):
             def _attempt_connect(retry_left=3):
                 if self.camera_instance.connect():
                     self.camera_instance.start_stream()
+                    self.camera.set_preview_mode(False)
                     cam_thread = self.camera_instance.thread
                     if not self.worker_thread:                       # agar tak duplikat
                         self.worker_thread = QThread(self)
@@ -797,6 +798,7 @@ class CameraDetailUI(QMainWindow):
             except TypeError:
                 pass
         if self.camera_instance:
+            self.camera_instance.set_preview_mode(True)
             self.camera_instance.disconnect()
 
         if self.ui_update_timer.isActive():

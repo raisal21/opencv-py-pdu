@@ -345,8 +345,6 @@ class CameraThread(QThread):
                                 # Reset counter error jika berhasil
                                 consecutive_errors = 0
 
-                                processed_frame = self.camera.process_frame_with_roi(frame)
-                                
                                 # Simpan frame dan emit signal
                                 self.camera.last_frame = frame
                                 self.frame_received.emit(frame)

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QComboBox, QPushButton, 
                                QFrame, QSizePolicy, QGridLayout, QSpacerItem,
                                QMessageBox)
-from PySide6.QtCore import Qt, QSize, QRect, QTimer, QPropertyAnimation, QDateTime, QPointF, QMarginsF, QMargins, Slot, QUrl
+from PySide6.QtCore import Qt, QThread, QSize, QRect, QTimer, QPropertyAnimation, QDateTime, QPointF, QMarginsF, QMargins, Slot, QUrl
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QLinearGradient, QCursor, QIcon, QDesktopServices
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 from resources import resource_path
@@ -24,6 +24,7 @@ from utils.material_detector import (
 )
 from models.database import DatabaseManager
 from utils.coverage_logger import CoverageLogger
+from utils.frame_processor import FrameProcessor
 from views.roi_window import ROISelectorDialog
 
 
@@ -247,7 +248,10 @@ class CameraDetailUI(QMainWindow):
         # Save camera data
         self.camera_data = camera_data
         self.camera_instance = None
-        
+
+        self.worker_thread: QThread | None = None
+        self.frame_processor: FrameProcessor | None = None
+
         # Initialize material detector components
         self.bg_subtractor = None
         self.contour_processor = None
@@ -514,8 +518,8 @@ class CameraDetailUI(QMainWindow):
         # Get the preset parameters
         preset_params = BG_PRESETS[preset_key]
         
-        # Create a new background subtractor with the preset parameters
-        self.bg_subtractor = ForegroundExtraction(**preset_params)
+        if self.frame_processor:
+            self.frame_processor.bg_subtractor = ForegroundExtraction(**preset_params)
             
         # Show confirmation message
         QMessageBox.information(
@@ -535,8 +539,8 @@ class CameraDetailUI(QMainWindow):
         # Get the preset parameters
         preset_params = CONTOUR_PRESETS[preset_key]
         
-        # Create a new contour processor with the preset parameters
-        self.contour_processor = ContourProcessor(**preset_params)
+        if self.frame_processor:
+            self.frame_processor.contour_proc = ContourProcessor(**preset_params)
             
         # Show confirmation message
         QMessageBox.information(
@@ -547,33 +551,7 @@ class CameraDetailUI(QMainWindow):
     
     @Slot(np.ndarray)
     def handle_roi_frame(self, frame: np.ndarray):
-        # 1) Terapkan ROI
-        roi_frame = self.camera_instance.process_frame_with_roi(frame)
-        if roi_frame is None:
-            return
-
-        # 2) Proses material detection
-        try:
-            result = self.bg_subtractor.process_frame(roi_frame)
-            contour_result = self.contour_processor.process_mask(result.binary)
-            display_frame = self.contour_processor.visualize(
-                roi_frame,
-                contour_result.contours,
-                contour_result.metrics
-            )
-
-            # Simpan metrics untuk update per 5 detik
-            self.current_metrics = contour_result.metrics
-            self.current_coverage_percent = int(
-                contour_result.metrics['processed_coverage_percent']
-            )
-
-            # 3) Update UI video
-            self.video_display.update_frame(display_frame)
-        except Exception as e:
-            # Fallback jika processing gagal
-            print(f"Error in material detection: {e}")
-            self.video_display.update_frame(roi_frame)
+        pass
 
     def reset_background(self):
         """Reset the background model"""
@@ -584,6 +562,15 @@ class CameraDetailUI(QMainWindow):
                 "Background Reset",
                 "Background model has been reset."
             )
+    
+    @Slot(np.ndarray, dict)
+    def on_processed_frame(self, display_frame, metrics):
+        """Update UI dari worker."""
+        self.current_metrics = metrics or {}
+        self.current_coverage_percent = int(
+            metrics.get("processed_coverage_percent", 0)
+        )
+        self.video_display.update_frame(display_frame)
     
     def update_coverage_display(self):
         """Update the coverage status and graph with the latest metrics (called every 5 seconds)"""
@@ -640,10 +627,29 @@ class CameraDetailUI(QMainWindow):
             def _attempt_connect(retry_left=3):
                 if self.camera_instance.connect():
                     self.camera_instance.start_stream()
-                    th = self.camera_instance.thread
-                    th.frame_received.connect(self.handle_roi_frame)
-                    th.error_occurred.connect(self.handle_camera_error)
-                    th.connection_changed.connect(self.handle_connection_change)
+                    cam_thread = self.camera_instance.thread
+                    if not self.worker_thread:                       # agar tak duplikat
+                        self.worker_thread = QThread(self)
+
+                        bg_params       = BG_PRESETS["default"]
+                        contour_params  = CONTOUR_PRESETS["standard"]
+
+                        self.frame_processor = FrameProcessor(
+                            self.camera_instance,
+                            bg_params,
+                            contour_params
+                        )
+                        self.frame_processor.moveToThread(self.worker_thread)
+
+                        cam_thread.frame_received.connect(
+                            self.frame_processor.process, Qt.QueuedConnection
+                        )
+                        self.frame_processor.processed.connect(
+                            self.on_processed_frame, Qt.QueuedConnection
+                        )
+                        self.worker_thread.start()
+                    cam_thread.error_occurred.connect(self.handle_camera_error)
+                    cam_thread.connection_changed.connect(self.handle_connection_change)
                 elif retry_left > 0:
                     QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
                 else:
@@ -772,6 +778,15 @@ class CameraDetailUI(QMainWindow):
             self.video_display.set_offline_message()
     
     def closeEvent(self, event):
+        if getattr(self, "worker_thread", None) and self.worker_thread.isRunning():
+            self.worker_thread.quit()
+            self.worker_thread.wait()
+            self.worker_thread = None
+        if getattr(self, "frame_processor", None):
+            try:
+                self.frame_processor.deleteLater()
+            except RuntimeError:
+                pass
         if self.camera_instance and self.camera_instance.thread:
             th = self.camera_instance.thread
             # lepaskan sinyal agar jendela baru tidak menerima pesan error lama
@@ -788,8 +803,8 @@ class CameraDetailUI(QMainWindow):
             self.ui_update_timer.stop()
 
         try:
-            self.coverage_logger.flush()   # tunggu antrian kosong
-            self.coverage_logger.stop()    # hentikan worker thread
+            self.coverage_logger.flush()
+            self.coverage_logger.stop()
         except Exception as e:
             print(f"[CoverageLogger] gagal shutdown: {e}")
         

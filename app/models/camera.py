@@ -6,10 +6,10 @@ import psutil
 from PySide6.QtCore import Qt, QThread, Signal, QMutex, QMutexLocker, QSize
 from PySide6.QtGui import QImage, QPixmap
 
-FPS_PREVIEW = 5            # thumbnail di MainWindow
-FPS_DETAIL  = 15           # jendela CameraDetail aktif
-FPS_IDLE    = 3            # kamera sedang minimised/hidden
-CPU_HIGH_THRESHOLD = 80    # %
+FPS_PREVIEW = 5 
+FPS_DETAIL  = 15
+FPS_IDLE    = 3
+CPU_HIGH_THRESHOLD = 80
 
 
 class Camera:
@@ -17,7 +17,6 @@ class Camera:
     Class untuk mengelola koneksi dan properti kamera IP dengan RTSP.
     Menangani koneksi, streaming, dan status kamera.
     """
-    
     def __init__(self, camera_id=None, name="Untitled Camera", ip_address="0.0.0.0", port=554,
                  username="", password="", stream_path="stream1", custom_url=None):
         """
@@ -38,13 +37,11 @@ class Camera:
         self.name = name
         self.ip_address = ip_address
         self.port = port
-        
         # Properti koneksi RTSP
         self.username = username
         self.password = password
         self.stream_path = stream_path
         self.custom_url = custom_url
-        
         # Status dan resource kamera
         self.connection_status = False
         self.capture = None
@@ -52,7 +49,6 @@ class Camera:
         self.last_error = None
         self.last_reconnect_attempt = 0
         self.reconnect_interval = 10  # dalam detik
-        
         # Properti tambahan
         self.resolution = (640, 480)
         self.roi_points = None
@@ -60,12 +56,10 @@ class Camera:
         self.is_preview_mode: bool = False
 
         self._roi_M:      np.ndarray | None = None 
-        self._roi_size:   tuple[int, int] | None = None
-        
+        self._roi_size:   tuple[int, int] | None = None   
         # Thread dan mutex
         self.mutex = QMutex()
         self.thread = None
-    
     def build_stream_url(self):
         """
         Membuat URL lengkap untuk stream kamera RTSP.

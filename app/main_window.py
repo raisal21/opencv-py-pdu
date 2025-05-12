@@ -7,12 +7,12 @@ from datetime import datetime
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                               QLabel, QPushButton, QFrame, QScrollArea, QSizePolicy, 
                               QMessageBox, QDialog)
-from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QThread
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QThread, QThreadPool
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap
 
 from resources import resource_path
-from models.camera import Camera, convert_cv_to_pixmap, CameraThread
-from views.add_camera import AddCameraDialog, validate_ip_address
+from models.camera import convert_cv_to_pixmap, CameraThread
+from views.add_camera import AddCameraDialog
 from models.database import DatabaseManager
 
 
@@ -86,23 +86,6 @@ class DeleteCameraDialog(QDialog):
         
         layout.addLayout(button_layout)
 
-# Worker untuk mendeteksi status kamera secara asinkron
-class CameraStatusWorker(QObject):
-    """Worker untuk memeriksa status kamera di thread terpisah"""
-    status_changed = Signal(bool)
-    finished = Signal()
-    
-    def __init__(self, ip, port):
-        super().__init__()
-        self.ip = ip
-        self.port = port
-    
-    def check_status(self):
-        """Periksa status kamera"""
-        is_online = validate_ip_address(self.ip, self.port)
-        self.status_changed.emit(is_online)
-        self.finished.emit()
-
 # Modifikasi kelas CameraItem untuk menampilkan kamera dari database
 class CameraItem(QFrame):
     """Reusable widget untuk menampilkan satu kamera dalam daftar"""
@@ -126,9 +109,7 @@ class CameraItem(QFrame):
         self.password = password
         self.stream_path = stream_path
         self.url = url
-        self.is_online = is_online
-        self.preview_stream: Camera | None = None
-        
+        self.is_online = is_online        
         # Konfigurasi frame
         self.setFrameShape(QFrame.StyledPanel)
         self.setFrameShadow(QFrame.Raised)
@@ -262,16 +243,7 @@ class CameraItem(QFrame):
         # Tambahkan bagian tombol ke layout utama
         layout.addLayout(buttons_layout)
         
-        # Timer untuk memeriksa status kamera
-        self.status_timer = QTimer(self)
-        self.status_timer.timeout.connect(self.check_camera_status)
-        self.status_timer.start(30000)  # Periksa setiap 30 detik
-
-        self._status_thread: QThread | None = None
         self._status_worker: CameraStatusWorker | None = None
-        
-        # Lakukan pemeriksaan status awal
-        QTimer.singleShot(100, self.check_camera_status)
     
     def set_preview(self, image):
         """Set gambar preview kamera"""
@@ -292,95 +264,20 @@ class CameraItem(QFrame):
             self.preview_widget.setPixmap(pixmap)
             # hapus teks/offline‑bg jika masih ada
             self.preview_widget.setStyleSheet("border-radius: 4px;")
-    
-    def get_preview_frame(self):
-        """Get a single frame from the camera stream for preview"""
-        try:
-        #  ➜ 1. Bangun URL sekali saja
-            rtsp_url = Camera(
-                name=self.camera_name, ip_address=self.ip_address,
-                port=self.port, username=self.username,
-                password=self.password, stream_path=self.stream_path,
-                custom_url=self.url).build_stream_url()
 
-            #  ➜ 2. Buka langsung dengan OpenCV, ambil 1 frame, lalu tutup
-            cap = cv.VideoCapture(rtsp_url)
-            cap.set(cv.CAP_PROP_FRAME_WIDTH, 160)
-            cap.set(cv.CAP_PROP_FRAME_HEIGHT, 90)
-            ret, frame = cap.read()
-            cap.release()
-
-            if ret and frame is not None:
-                pixmap = convert_cv_to_pixmap(frame, QSize(160, 90))
-                self.preview_widget.setPixmap(pixmap)
-        except Exception as e:
-            print(f"[Preview] {e}")
-
-    def update_status(self, is_online):
+    def update_status(self, is_online: bool):
         self.is_online = is_online
         status_color = "#4CAF50" if is_online else "#9CA3AF"
-        status_text = "Online" if is_online else "Offline"
+        status_text  = "Online"   if is_online else "Offline"
         self.status_label.setText(f"Status: {status_text}")
         self.status_label.setStyleSheet(f"font-size: 14px; color: {status_color}; border: 0px;")
 
-        if is_online:
-            # --- guard: jika sudah ada stream, tidak buat ulang ---
-            if self.preview_stream:
-                return
-            cam = Camera(name=self.camera_name,
-                        ip_address=self.ip_address,
-                        port=self.port,
-                        username=self.username,
-                        password=self.password,
-                        stream_path=self.stream_path,
-                        custom_url=self.url)
-            cam.is_preview_mode = True
-            if cam.connect():
-                cam.start_stream()
-                if cam.thread:
-                    cam.thread.frame_received.connect(self._update_preview_label)
-                self.preview_stream = cam
-
-        else:  # offline
-            if self.preview_stream:
-                self.preview_stream.disconnect()
-                self.preview_stream = None
+        if not is_online:
             self.preview_widget.clear()
             self.preview_widget.setText("Offline")
             self.preview_widget.setStyleSheet(
                 "background-color: #1C1C1F; color: #7f8c8d; font-size: 14px; border-radius: 4px;"
             )
-
-    def check_camera_status(self):
-        if not self.isVisible():
-            return
-        
-        if self._status_thread and self._status_thread.isRunning():
-            return
-        
-        self._status_thread = None
-
-        self._status_thread = QThread(self)
-        self._status_worker = CameraStatusWorker(self.ip_address, self.port)
-        self._status_worker.moveToThread(self._status_thread)
-
-        self._status_thread.started.connect(self._status_worker.check_status)
-        self._status_worker.status_changed.connect(self.update_status)
-
-        #  Pastikan urutan quit/delete benar
-        self._status_worker.finished.connect(self._status_thread.quit)
-        self._status_worker.finished.connect(self._status_worker.deleteLater)
-        self._status_thread.finished.connect(self._status_thread.deleteLater)
-
-        self._status_thread.finished.connect(
-            lambda: setattr(self, "_status_thread", None)
-        )
-
-        self._status_thread.finished.connect(
-            lambda: setattr(self, "_status_worker", None)
-        )
-
-        self._status_thread.start()
     
     def on_click(self, event):
         """Handler untuk klik pada item kamera"""
@@ -398,13 +295,6 @@ class CameraItem(QFrame):
         self.delete_clicked.emit(self.camera_id)
 
     def closeEvent(self, event):
-        if self._status_thread and self._status_thread.isRunning():
-            self._status_thread.quit()
-            self._status_thread.wait()
-
-        if self.preview_stream:
-            self.preview_stream.disconnect()
-            self.preview_stream = None
 
         super().closeEvent(event)
 
@@ -423,6 +313,12 @@ class CameraList(QWidget):
         
         # Dictionary untuk menyimpan instance kamera aktif
         self.active_cameras = {}
+
+        self.ping_pool   = QThreadPool.globalInstance()
+        self.ping_pool.setMaxThreadCount(4)
+        self.ping_timer  = QTimer(self)
+        self.ping_timer.timeout.connect(self._refresh_statuses)
+        self.ping_timer.start(20000)
         
         # Layout utama
         self.main_layout = QVBoxLayout(self)
@@ -543,6 +439,7 @@ class CameraList(QWidget):
             camera_item.delete_clicked.connect(self.delete_camera)
             
             self.cameras_layout.addWidget(camera_item)
+            self.active_cameras[camera_id] = Camera.from_dict(camera_data)
     
     def add_camera(self, name, ip_address, port, protocol="RTSP", username="", password="", stream_path="", url="", roi_points=None):
         """Menambahkan kamera baru ke daftar"""
@@ -625,6 +522,7 @@ class CameraList(QWidget):
                         "Update Failed",
                         "Failed to update camera. Please try again."
                     )
+        self.active_cameras[camera_id] = Camera.from_dict(camera_data)
     
     def delete_camera(self, camera_id):
         """Handler untuk menghapus kamera"""
@@ -655,6 +553,55 @@ class CameraList(QWidget):
                         "Delete Failed",
                         "Failed to delete camera. Please try again."
                     )
+    
+    def _refresh_previews(self):
+        """
+        Dipicu timer: iterasi item online & kirim SnapshotWorker ke thread‑pool.
+        """
+        from preview_scheduler import SnapshotWorker        # hindari import siklik
+
+        for i in range(self.cameras_layout.count()):
+            item = self.cameras_layout.itemAt(i).widget()
+            if not item or not item.is_online:
+                continue
+
+            worker = SnapshotWorker(self.active_cameras, item.camera_id)
+            worker.signals.finished.connect(
+                lambda cid, pixmap, ref=item:
+                    ref.set_preview(pixmap) if ref.camera_id == cid else None
+            )
+            self.preview_pool.start(worker)
+
+    def _refresh_statuses(self):
+        """
+        Kirim PingWorker untuk tiap kamera; hasilnya update_status di CameraItem.
+        """
+        from ping_scheduler import PingWorker          # hindari import siklik
+
+        for i in range(self.cameras_layout.count()):
+            item = self.cameras_layout.itemAt(i).widget()
+            if not item:                                  # widget spacer dsb.
+                continue
+
+            worker = PingWorker(item.camera_id, item.ip_address, item.port)
+            worker.signals.finished.connect(
+                lambda cid, ok, ref=item:
+                    ref.update_status(ok) if ref.camera_id == cid else None
+            )
+            self.ping_pool.start(worker)
+    
+    def showEvent(self, e):
+        super().showEvent(e)
+        if not self.preview_timer.isActive():
+            self.preview_timer.start()
+        if not self.ping_timer.isActive():
+            self.ping_timer.start()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self.preview_timer.stop()
+        self.ping_timer.stop()
+
 
 
 class MainWindow(QMainWindow):
@@ -685,7 +632,6 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 600)
         self.setStyleSheet("background-color: #09090B;")
         self.setWindowIcon(QIcon(resource_path("assets/icons/pdu.png")))
-        self.showMaximized()
 
         # Central widget
         central_widget = QWidget()
@@ -814,6 +760,7 @@ class MainWindow(QMainWindow):
                 color: #E4E4E7;
             }
         """)
+        self.showMaximized()
     
     def update_clock(self):
         """Update jam pada header"""
@@ -896,23 +843,6 @@ class MainWindow(QMainWindow):
                 f"Camera with ID {camera_id} not found."
             )
 
-    def showEvent(self, event):
-        """
-        Dipanggil otomatis setiap kali MainWindow muncul kembali.
-        Kembalikan semua preview ke FPS rendah (mode preview).
-        """
-        super().showEvent(event)
-
-        # Iterasi semua item di CameraList
-        layout = self.camera_list.cameras_layout
-        for i in range(layout.count()):
-            item = layout.itemAt(i).widget()
-            if not item:
-                continue
-
-            cam = getattr(item, "preview_stream", None)  # Camera atau None
-            if cam:
-                cam.set_preview_mode(True) 
 
 
 if __name__ == "__main__":

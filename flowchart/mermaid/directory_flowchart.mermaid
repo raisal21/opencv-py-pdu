@@ -1,0 +1,102 @@
+flowchart TD
+    %% Top-level directories
+    root["Project Root"] --> app["app/"]
+    root --> machine_learning["machine_learning/"]
+    root --> docs["flowchart/"]
+    root --> configs["EyeLog.spec\nrequirements.txt"]
+    
+    %% app directory structure with dependencies
+    app --> app_init["__init__.py\n(Entry Point)"]
+    app --> main_window["main_window.py\n(Main Window)"]
+    app --> resources["resources.py\n(Asset Path Helper)"]
+    
+    %% app subdirectories
+    app --> models["models/"]
+    app --> views["views/"]
+    app --> utils["utils/"]
+    app --> tests["tests/"]
+    app --> assets["assets/\n(Icons, Fonts)"]
+    
+    %% models directory and files
+    models --> camera["camera.py\n(Camera Model, Thread)"]
+    models --> database["database.py\n(SQLite Manager)"]
+    
+    %% views directory and files
+    views --> add_camera["add_camera.py\n(Camera Setup Dialog)"]
+    views --> camera_detail["camera_detail.py\n(Camera Monitoring View)"]
+    views --> roi_window["roi_window.py\n(ROI Dialog)"]
+    
+    %% utils directory and files
+    utils --> material_detector["material_detector.py\n(BG Subtraction, Contours)"]
+    utils --> frame_processor["frame_processor.py\n(Processing Thread)"]
+    utils --> roi_selector["roi_selector.py\n(ROI Selection Logic)"]
+    utils --> coverage_logger["coverage_logger.py\n(CSV Logger)"]
+    utils --> preview_scheduler["preview_scheduler.py\n(Snapshot Worker)"]
+    utils --> ping_scheduler["ping_scheduler.py\n(Ping Worker)"]
+    utils --> db_worker["db_worker.py\n(DB Thread Worker)"]
+    utils --> log["log.py\n(Logging Setup)"]
+    
+    %% tests directory and files
+    tests --> test_database["test_database.py"]
+    tests --> test_camera_roi["test_camera_roi.py"]
+    tests --> test_material_detector["test_material_detector.py"]
+    tests --> test_camera_url["test_camera_url.py"]
+    
+    %% machine_learning directory and files
+    machine_learning --> ml_main["main.py\n(Standalone App)"]
+    machine_learning --> ml_material_detector["material_detector.py\n(Detection Logic)"]
+    machine_learning --> ml_roi_selector["roi_selector.py\n(ROI Handling)"]
+    
+    %% Key file dependencies (imports)
+    app_init -.-> main_window
+    main_window -.-> camera
+    main_window -.-> database
+    main_window -.-> add_camera
+    main_window -.-> camera_detail
+    main_window -.-> resources
+    main_window -.-> db_worker
+    main_window -.-> ping_scheduler
+    main_window -.-> preview_scheduler
+    
+    add_camera -.-> roi_window
+    roi_window -.-> roi_selector
+    
+    camera_detail -.-> camera
+    camera_detail -.-> coverage_logger
+    camera_detail -.-> frame_processor
+    camera_detail -.-> material_detector
+    
+    frame_processor -.-> camera
+    frame_processor -.-> material_detector
+    
+    camera -.-> resources
+    
+    ml_main -.-> ml_material_detector
+    ml_main -.-> ml_roi_selector
+    
+    camera_detail -.-> resources
+    add_camera -.-> resources
+    roi_window -.-> resources
+    
+    %% External dependencies
+    camera -.-> external_cv["OpenCV Library"]
+    material_detector -.-> external_cv
+    roi_selector -.-> external_cv
+    
+    %% Shared styles
+    classDef appFiles fill:#f9f9ff,stroke:#9999cc,stroke-width:1px
+    classDef modelFiles fill:#f9fff9,stroke:#99cc99,stroke-width:1px
+    classDef viewFiles fill:#fff9f9,stroke:#cc9999,stroke-width:1px
+    classDef utilFiles fill:#fffbf2,stroke:#d6b656,stroke-width:1px
+    classDef testFiles fill:#f5f5f5,stroke:#666666,stroke-width:1px
+    classDef mlFiles fill:#e1d5e7,stroke:#9673a6,stroke-width:1px
+    classDef dirNode fill:#e8e8e8,stroke:#888888,stroke-width:1px
+    
+    %% Apply styles
+    class app_init,main_window,resources appFiles
+    class camera,database modelFiles
+    class add_camera,camera_detail,roi_window viewFiles
+    class material_detector,frame_processor,roi_selector,coverage_logger,preview_scheduler,ping_scheduler,db_worker,log utilFiles
+    class test_database,test_camera_roi,test_material_detector,test_camera_url testFiles
+    class ml_main,ml_material_detector,ml_roi_selector mlFiles
+    class app,models,views,utils,tests,machine_learning,docs,configs,assets dirNode

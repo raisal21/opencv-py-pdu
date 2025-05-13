@@ -1,0 +1,114 @@
+flowchart TD
+    %% Main entry points
+    init["app/__init__.py"] --> load_fonts["Load Fonts"]
+    init --> MainWindow["main_window.py"]
+    
+    %% Core components
+    subgraph Core ["Core Components"]
+        MainWindow --> Resources["resources.py"]
+        MainWindow --> DatabaseManager["models/database.py"]
+        MainWindow --> CameraList["Camera List UI"]
+        MainWindow --> AddCamera["views/add_camera.py"]
+        MainWindow --> camview["views/camera_detail.py"]
+    end
+    
+    %% Camera model and classes
+    subgraph CameraModel ["Camera Model"]
+        Camera["models/camera.py"]
+        Camera --> CameraThread["CameraThread Class"]
+        Camera --> convert_cv_to_pixmap["convert_cv_to_pixmap()"]
+        Camera --> process_frame_with_roi["process_frame_with_roi()"]
+    end
+    
+    %% Database
+    subgraph Database ["Database Layer"]
+        DatabaseManager --> SQLite[(SQLite Database)]
+        DatabaseManager --> DBWorker["utils/db_worker.py"]
+    end
+    
+    %% Camera List UI
+    CameraList --> Camera
+    CameraList --> PingWorker["utils/ping_scheduler.py"]
+    CameraList --> SnapshotWorker["utils/preview_scheduler.py"]
+    CameraList --> DB_Pool["QThreadPool (DB)"]
+    CameraList --> Ping_Pool["QThreadPool (Ping)"]
+    CameraList --> Preview_Pool["QThreadPool (Preview)"]
+    
+    %% Add Camera View
+    AddCamera --> validate_ip_address["utils/validate_ip_address()"]
+    AddCamera --> ROIDialog["views/roi_window.py"]
+    
+    %% ROI dialogs and utilities
+    ROIDialog --> ROISelector["utils/roi_selector.py"]
+    
+    %% Camera detail view
+    subgraph CameraDetail ["Camera Detail View"]
+        camview --> Camera
+        camview --> log_setup["utils/log.py"]
+        camview --> CoverageLogger["utils/coverage_logger.py"]
+        camview --> FrameProcessor["utils/frame_processor.py"]
+        camview --> VideoDisplayWidget["Video Display Widget"]
+        camview --> CoverageStatusWidget["Coverage Status Widget"]
+        camview --> VerticalBarGraph["Chart Widget"]
+    end
+    
+    %% Frame Processing Components
+    subgraph FrameProcessing ["Frame Processing"]
+        FrameProcessor --> ForegroundExtraction["utils/material_detector.py:ForegroundExtraction"]
+        FrameProcessor --> ContourProcessor["utils/material_detector.py:ContourProcessor"]
+        FrameProcessor --> BG_PRESETS["Background Subtraction Presets"]
+        FrameProcessor --> CONTOUR_PRESETS["Contour Processing Presets"]
+    end
+    
+    %% Coverage Logging
+    CoverageLogger --> CSV_Files[(CSV Log Files)]
+    
+    %% Test modules
+    subgraph Testing ["Test Modules"]
+        test_database["tests/test_database.py"]
+        test_camera_roi["tests/test_camera_roi.py"]
+        test_material_detector["tests/test_material_detector.py"]
+        test_camera_url["tests/test_camera_url.py"]
+    end
+    
+    %% Machine Learning modules
+    subgraph ML ["Machine Learning"]
+        roi_selector_ml["machine_learning/roi_selector.py"]
+        material_detector_ml["machine_learning/material_detector.py"]
+        main_ml["machine_learning/main.py"]
+        main_ml --> material_detector_ml
+        main_ml --> roi_selector_ml
+    end
+
+    %% Dependencies between major components
+    MainWindow --> DBWorker
+    Camera --> resources.py
+    FrameProcessor --> Camera
+    ROISelector --> OpenCV["OpenCV"]
+    ForegroundExtraction --> OpenCV
+    ContourProcessor --> OpenCV
+    
+    %% Package structure container for better organization
+    subgraph app["app/ Package"]
+        Core
+        CameraModel
+        Database
+        CameraDetail
+        FrameProcessing
+        Testing
+    end
+    
+    %% External dependencies
+    OpenCV --> NumPy
+    MainWindow --> PySide6["PySide6 (Qt)"]
+    camview --> PySide6
+    Camera --> PySide6
+    
+    %% Styling
+    style Core fill:#f9f9ff,stroke:#9999cc,stroke-width:1px
+    style CameraModel fill:#f9fff9,stroke:#99cc99,stroke-width:1px
+    style Database fill:#fff9f9,stroke:#cc9999,stroke-width:1px
+    style CameraDetail fill:#f9f9ff,stroke:#9999cc,stroke-width:1px
+    style FrameProcessing fill:#fffbf2,stroke:#d6b656,stroke-width:1px
+    style Testing fill:#f5f5f5,stroke:#666666,stroke-width:1px
+    style ML fill:#e1d5e7,stroke:#9673a6,stroke-width:1px

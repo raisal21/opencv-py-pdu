@@ -7,5 +7,6 @@
 /app/utils/__pycache__/
 /app/views/__pycache__/
 /app/models/__pycache__/
+/flowchart/svg
 /logs
 /database

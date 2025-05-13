@@ -8,3 +8,4 @@
 /app/views/__pycache__/
 /app/models/__pycache__/
 /logs
+/database

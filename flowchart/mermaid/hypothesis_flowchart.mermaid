@@ -1,0 +1,71 @@
+flowchart TD
+    Start([Mulai Aplikasi]) --> MainWindow{Main Window}
+    
+    %% Main Window dan navigasinya
+    MainWindow --> MainWindowFeatures[Preview Camera Cards\nAdd Camera Button\nRemove Camera Button]
+    MainWindowFeatures --> ClickCard[Klik Card Preview Camera]
+    MainWindowFeatures --> ClickAddCamera[Klik Add Camera]
+    MainWindowFeatures --> ClickRemoveCamera[Klik Remove Camera]
+    
+    %% Add Camera Flow
+    ClickAddCamera --> AddCameraWindow{Add Camera Window}
+    AddCameraWindow --> FormInput[Input Nama Camera dan IP]
+    FormInput --> ValidateIP{IP Valid?}
+    ValidateIP -- Ya --> SaveCamera[Simpan Data Camera]
+    ValidateIP -- Tidak --> ShowError[Tampilkan Error pada Form]
+    ShowError --> FormInput
+    SaveCamera --> ROISelector{ROI Selector Window}
+    
+    %% ROI Selector Flow
+    ROISelector --> SelectROI[Pilih Area ROI]
+    SelectROI --> SaveROI{Simpan ROI?}
+    SaveROI -- Ya --> StoreROIData[Simpan Data ROI]
+    SaveROI -- Tidak --> ClearROI[Bersihkan Pilihan]
+    ClearROI --> SelectROI
+    StoreROIData --> MainWindow
+    
+    %% Camera Detail Flow
+    ClickCard --> DetailCamera{Detail Camera View}
+    DetailCamera --> DetailFeatures[Video ROI\nSlider Timeline\nPersentase Coverage\nGrafik Vertikal]
+    DetailFeatures --> ClickEdit[Klik Edit Button]
+    DetailFeatures --> ChoosePreset[Pilih Preset via Radio Button]
+    DetailFeatures --> ViewDetailTable[Klik Show Detail Table]
+    
+    %% Edit Camera ROI
+    ClickEdit --> ROISelector
+    
+    %% Preset Selection
+    ChoosePreset --> UpdatePreset[Update Preset Contour dan BG Subtraction]
+    UpdatePreset --> ProcessFrame[Proses Frame dengan Preset Baru]
+    ProcessFrame --> UpdateDisplay[Update Tampilan dan Perhitungan]
+    UpdateDisplay --> DetailCamera
+    
+    %% Detail Table
+    ViewDetailTable --> DetailTableWindow{Detail Table Window}
+    DetailTableWindow --> ShowDBData[Tampilkan Data PostgreSQL]
+    ShowDBData --> FilterData[Filter Data Berdasarkan Tanggal]
+    
+    %% Remove Camera
+    ClickRemoveCamera --> ConfirmDelete{Konfirmasi Hapus?}
+    ConfirmDelete -- Ya --> DeleteCamera[Hapus Data Camera]
+    ConfirmDelete -- Tidak --> MainWindow
+    DeleteCamera --> UpdateMainWindow[Update Tampilan Main Window]
+    UpdateMainWindow --> MainWindow
+    
+    %% Background Process
+    subgraph BackgroundProcesses [Background Processes]
+        VideoProcessing[Video Processing Thread]
+        BGSubtraction[Background Subtraction]
+        ContourDetection[Contour Detection]
+        CoverageCalculation[Coverage Calculation]
+        DatabaseStorage[Penyimpanan ke Database]
+    end
+    
+    DetailCamera -.-> VideoProcessing
+    VideoProcessing -.-> BGSubtraction
+    BGSubtraction -.-> ContourDetection
+    ContourDetection -.-> CoverageCalculation
+    CoverageCalculation -.-> DatabaseStorage
+    CoverageCalculation -.-> UpdateDisplay
+
+style BackgroundProcesses fill:#f9f9f9,stroke:#999,stroke-width:1px

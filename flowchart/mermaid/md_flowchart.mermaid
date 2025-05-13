@@ -1,0 +1,123 @@
+flowchart TD
+    Start([material_detector.py]) --> DataStructures[Define Named Tuples:\nFrameResult & ContourResult]
+    DataStructures --> DefinePresets[Define Presets:\nBG_PRESETS & CONTOUR_PRESETS]
+
+    subgraph ForegroundExtractionClass["ForegroundExtraction Class"]
+        FGInit[Initialize:\n- MOG2 Parameters\n- Morphological Parameters] --> CreateBGSubtractor[Create BackgroundSubtractorMOG2]
+        CreateBGSubtractor --> SetParameters[Set Additional Parameters:\n- nmixtures\n- backgroundRatio]
+        SetParameters --> CreateKernels[Create Morphological Kernels]
+        
+        ProcessFrame[process_frame Method] --> PreProcess{Pre-Process\nEnabled?}
+        PreProcess -- Yes --> ApplyPreProcess[Apply Pre-Processing:\n- Convert to Grayscale\n- Apply Morphological Ops]
+        PreProcess -- No --> SkipPreProcess[Skip Pre-Processing]
+        
+        ApplyPreProcess --> ApplyBGSubtraction[Apply Background Subtraction]
+        SkipPreProcess --> ApplyBGSubtraction
+        
+        ApplyBGSubtraction --> PostProcess{Post-Process\nEnabled?}
+        PostProcess -- Yes --> ApplyPostProcess[Apply Post-Processing\nMorphological Operations]
+        PostProcess -- No --> SkipPostProcess[Skip Post-Processing]
+        
+        ApplyPostProcess --> CreateBinaryMask[Create Binary Mask]
+        SkipPostProcess --> CreateBinaryMask
+        
+        CreateBinaryMask --> CreateDisplayMask[Create Display Mask\nfor Visualization]
+        CreateDisplayMask --> ReturnFrameResult[Return FrameResult\nTuple]
+        
+        ResetBackground[reset_background Method] --> RecreateBGSubtractor[Recreate Background\nSubtractor with\nSame Parameters]
+        
+        ApplyMorphOps[apply_morphological_ops Method] --> MorphTypeCheck{Morph Type?}
+        MorphTypeCheck -- None --> ReturnOriginal[Return Original Image]
+        MorphTypeCheck -- open --> ApplyOpen[Apply MORPH_OPEN]
+        MorphTypeCheck -- close --> ApplyClose[Apply MORPH_CLOSE]
+        MorphTypeCheck -- dilate --> ApplyDilate[Apply Dilate]
+        MorphTypeCheck -- erode --> ApplyErode[Apply Erode]
+        
+        ApplyOpen --> ReturnProcessed[Return Processed Image]
+        ApplyClose --> ReturnProcessed
+        ApplyDilate --> ReturnProcessed
+        ApplyErode --> ReturnProcessed
+    end
+    
+    subgraph ContourProcessorClass["ContourProcessor Class"]
+        CPInit[Initialize:\n- Contour Parameters\n- Visualization Parameters] 
+        
+        ProcessMask[process_mask Method] --> CheckMaskType{Is Mask RGB?}
+        CheckMaskType -- Yes --> ConvertGrayscale[Convert to Grayscale]
+        CheckMaskType -- No --> UseAsMask[Use as Mask]
+        
+        ConvertGrayscale --> FindContours[Find Contours\nRETR_EXTERNAL, CHAIN_APPROX_SIMPLE]
+        UseAsMask --> FindContours
+        
+        FindContours --> FilterByArea[Filter Contours\nby Minimum Area]
+        FilterByArea --> ConvexHullCheck{Use Convex\nHull?}
+        
+        ConvexHullCheck -- Yes --> ApplyConvexHull[Apply Convex Hull\nto Contours]
+        ConvexHullCheck -- No --> SkipConvexHull[Use Original Contours]
+        
+        ApplyConvexHull --> MergeCheck{Merge\nOverlapping?}
+        SkipConvexHull --> MergeCheck
+        
+        MergeCheck -- Yes --> MergeContours[Merge Close Contours]
+        MergeCheck -- No --> SkipMerge[Use Individual Contours]
+        
+        MergeContours --> CreateResultMask[Create Result Mask\nwith Processed Contours]
+        SkipMerge --> CreateResultMask
+        
+        CreateResultMask --> CalculateMetrics[Calculate Coverage\nand Area Metrics]
+        CalculateMetrics --> ReturnContourResult[Return ContourResult\nTuple]
+        
+        MergeCloseContours[_merge_close_contours Method] --> CreateMergedMask[Create Mask of\nAll Contours]
+        CreateMergedMask --> DilateMask[Dilate Mask to\nConnect Close Contours]
+        DilateMask --> FindMergedContours[Find Contours\nin Dilated Mask]
+        FindMergedContours --> ReturnMergedContours[Return Merged Contours]
+        
+        CalculateMetricsMethod[_calculate_metrics Method] --> GetPixelCounts[Calculate Pixel Counts\nand Areas]
+        GetPixelCounts --> CalcPercentages[Calculate Coverage\nPercentages]
+        CalcPercentages --> BuildMetricsDict[Build Metrics Dictionary]
+        BuildMetricsDict --> ReturnMetrics[Return Metrics]
+        
+        Visualize[visualize Method] --> DrawContours[Draw All Contours]
+        DrawContours --> ConvexHullVisCheck{Use Convex\nHull?}
+        ConvexHullVisCheck -- Yes --> DrawHulls[Draw Convex Hulls]
+        ConvexHullVisCheck -- No --> SkipHulls[Skip Hull Drawing]
+        
+        DrawHulls --> ShowIndexCheck{Show\nIndices?}
+        SkipHulls --> ShowIndexCheck
+        
+        ShowIndexCheck -- Yes --> DrawIndices[Draw Contour Indices]
+        ShowIndexCheck -- No --> SkipIndices[Skip Indices]
+        
+        DrawIndices --> ShowAreaCheck{Show\nAreas?}
+        SkipIndices --> ShowAreaCheck
+        
+        ShowAreaCheck -- Yes --> DrawAreas[Draw Contour Areas]
+        ShowAreaCheck -- No --> SkipAreas[Skip Areas]
+        
+        DrawAreas --> ReturnVisualization[Return Visualization\nImage]
+        SkipAreas --> ReturnVisualization
+    end
+    
+    subgraph WorkFlow["Processing Workflow"]
+        direction LR
+        InputFrame[Input Frame] --> FGProcess[ForegroundExtraction\nprocess_frame]
+        FGProcess --> FGResult[FrameResult\n- original\n- mask\n- binary]
+        FGResult --> CPProcess[ContourProcessor\nprocess_mask]
+        CPProcess --> CPResult[ContourResult\n- mask\n- contours\n- metrics]
+        CPResult --> VizualizeCoverage[Visualize Results\nwith Coverage Metrics]
+    end
+    
+    %% Preset Selection
+    DefinePresets --> BgPresets[Background Presets:\n- default\n- shale-day-clear\n- shale-day-rainy\n- shale-night\n- shale-vibration\n- shale-dust]
+    
+    DefinePresets --> ContourPresets[Contour Presets:\n- standard\n- detailed\n- simplified]
+    
+    BgPresets -.-> UseBGPreset[Use Preset to\nCreate ForegroundExtraction]
+    ContourPresets -.-> UseContourPreset[Use Preset to\nCreate ContourProcessor]
+    
+    UseBGPreset --> FGInit
+    UseContourPreset --> CPInit
+
+style ForegroundExtractionClass fill:#f0f0f0,stroke:#333,stroke-width:1px
+style ContourProcessorClass fill:#f5f5f5,stroke:#666,stroke-width:1px
+style WorkFlow fill:#f9f9f9,stroke:#999,stroke-width:1px

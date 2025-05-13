@@ -1,0 +1,107 @@
+flowchart TD
+    Start([Mulai Aplikasi]) --> LoadFonts[Load Inter Font] --> MainWindow{Main Window}
+    
+    %% Main Window dan navigasinya
+    MainWindow --> MainWindowFeatures[Preview Camera Cards\nAdd Camera Button\nRemove Camera Button]
+    MainWindowFeatures --> ClickCard[Klik Card Preview Camera]
+    MainWindowFeatures --> ClickAddCamera[Klik Add Camera]
+    MainWindowFeatures --> ClickRemoveCamera[Klik Remove Camera]
+    
+    %% Camera List & Preview System
+    subgraph CameraListProcess [Camera List Handling]
+        MainWindow --> LoadCameras[Load Cameras dari SQLite]
+        LoadCameras --> PopulateCamList[Populate Camera List]
+        PopulateCamList --> PreviewPool[Preview Thread Pool]
+        PopulateCamList --> PingPool[Ping Thread Pool]
+        PreviewPool -. SnapshotWorker .-> CameraPreview[Update Preview Images]
+        PingPool -. PingWorker .-> CameraStatus[Update Online Status]
+    end
+    
+    %% Add Camera Flow
+    ClickAddCamera --> AddCameraWindow{Add Camera Window}
+    AddCameraWindow --> FormInput[Input Nama Camera,\nIP, Port, Stream Path]
+    FormInput --> ValidateIP{IP Valid?}
+    ValidateIP -- Tidak --> ShowError[Tampilkan Error pada Form]
+    ShowError --> FormInput
+    ValidateIP -- Ya --> TestConnection[Test Connection dengan Timeout]
+    TestConnection -- Gagal --> ShowConnError[Tampilkan Error Koneksi]
+    ShowConnError --> FormInput
+    TestConnection -- Sukses --> ROISelector{ROI Selector Window}
+    
+    %% ROI Selector Flow - More Refined Process
+    ROISelector --> SelectPoint1[Pilih Titik Pertama]
+    SelectPoint1 --> SelectPoint2[Pilih Titik Kedua]
+    SelectPoint2 --> SelectPoint3[Pilih Titik Ketiga\nTitik Keempat Otomatis]
+    SelectPoint3 --> ROIComplete[ROI Selection Complete]
+    ROIComplete --> SaveROI{Tekan Enter\nUntuk Simpan?}
+    SaveROI -- Klik Kanan --> ResetROI[Reset ROI Selection]
+    ResetROI --> SelectPoint1
+    SaveROI -- Ya --> GetROIAndImage[Extract ROI Data dan\nTransformed Image]
+    GetROIAndImage --> SaveCamWithROI[Save Camera dengan ROI\nke SQLite via DBWorker]
+    SaveCamWithROI --> MainWindow
+    
+    %% Camera Detail Flow - Updated
+    ClickCard --> DetailCamera{Detail Camera View}
+    
+    subgraph DetailCameraProcess [Detail Camera View Process]
+        DetailCamera --> InitCamera[Inisialisasi Camera Object]
+        InitCamera --> StartStream[Start Camera Stream Thread]
+        StartStream --> InitFrameProcessor[Mulai Frame Processor di Thread Terpisah] 
+        InitFrameProcessor --> ProcessFrame[Proses Frame dengan BG Subtraction\ndan Contour Detection]
+        ProcessFrame --> DisplayResults[Tampilkan Video\ndan Hasil Procesing]
+        DisplayResults --> UpdateCoverage[Update Coverage Metrics]
+        UpdateCoverage --> LogCoverageCSV[Log Hasil ke CSV File]
+    end
+    
+    DetailFeatures[Video Display\nCoverage Status\nVertical Coverage Graph] --- DetailCamera
+    DetailFeatures --> ClickEdit[Klik Edit ROI Button]
+    DetailFeatures --> ChoosePreset[Pilih Preset Background/Contour]
+    DetailFeatures --> ViewLogsFolder[Klik Logs Folder]
+    
+    %% Edit Camera ROI
+    ClickEdit --> FetchCurrentFrame[Ambil Frame Terbaru]
+    FetchCurrentFrame --> ROISelector
+    
+    %% Preset Selection - Updated with Specific Presets
+    ChoosePreset --> SelectBGPreset{Pilih BG Preset}
+    ChoosePreset --> SelectContourPreset{Pilih Contour Preset}
+    
+    SelectBGPreset --> UpdateBGSubtractor[Update BG Subtractor\ndefault/shale-day/night/rainy/etc]
+    SelectContourPreset --> UpdateContourProc[Update Contour Processor\nstandard/detailed/simplified]
+    
+    UpdateBGSubtractor --> ProcessFrame
+    UpdateContourProc --> ProcessFrame
+    
+    %% Open Logs Folder
+    ViewLogsFolder --> FlushLogger[Flush Coverage Logger]
+    FlushLogger --> OpenLogDir[Buka Folder CSV Logs]
+    
+    %% Remove Camera
+    ClickRemoveCamera --> ConfirmDelete{Konfirmasi Hapus?}
+    ConfirmDelete -- Tidak --> MainWindow
+    ConfirmDelete -- Ya --> DeleteCameraDB[Delete Camera dari SQLite\nvia DBWorker]
+    DeleteCameraDB --> RemoveCamObj[Remove Camera Object\ndari Active Cameras]
+    RemoveCamObj --> ReloadCamList[Reload Camera List]
+    ReloadCamList --> MainWindow
+    
+    %% Background Process System - Updated
+    subgraph WorkerThreads [Worker Threads]
+        CameraThread[Camera Streaming Thread]
+        FrameProcessorThread[Frame Processor Thread]
+        DBWorkerPool[Database Workers Thread Pool]
+        PingWorkers[Ping Workers Thread Pool] 
+        SnapshotWorkers[Snapshot Workers Thread Pool]
+        CoverageLoggerThread[Coverage Logger Thread]
+    end
+    
+    DetailCamera -.-> CameraThread
+    CameraThread -.-> FrameProcessorThread
+    FrameProcessorThread --> BGSubtractor[Background Subtraction]
+    BGSubtractor --> ContourProcessor[Contour Processing]
+    ContourProcessor --> MetricsCalculation[Coverage Metrics Calculation]
+    MetricsCalculation -.-> CoverageLoggerThread
+    MetricsCalculation -.-> DisplayResults
+
+style WorkerThreads fill:#f9f9f9,stroke:#999,stroke-width:1px
+style DetailCameraProcess fill:#f5f5f5,stroke:#666,stroke-width:1px
+style CameraListProcess fill:#f5f5f5,stroke:#666,stroke-width:1px

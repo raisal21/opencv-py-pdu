@@ -94,7 +94,7 @@ class DatabaseManager:
             #     ...
             
         except sqlite3.Error as e:
-            print(f"Migration error: {e}")
+            logger.error(f"Migration error: {e}")
         finally:
             conn.close()
     
@@ -126,7 +126,7 @@ class DatabaseManager:
             camera_id = cursor.lastrowid
             return camera_id
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error: {e}")
             return None
         finally:
             conn.close()
@@ -155,7 +155,7 @@ class DatabaseManager:
             conn.commit()
             return cursor.rowcount > 0
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error: {e}")
             return False
         finally:
             conn.close()
@@ -177,7 +177,7 @@ class DatabaseManager:
             conn.commit()
             return cursor.rowcount > 0
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error: {e}")
             return False
         finally:
             conn.close()
@@ -225,13 +225,13 @@ class DatabaseManager:
                         # Convert lists back to tuples if needed
                         camera['roi_points'] = [tuple(point) for point in points_data]
                     except json.JSONDecodeError as e:
-                        print(f"Error deserializing ROI points: {e}")
+                        logger.error(f"Error deserializing ROI points: {e}")
                 # Keep as string if deserialization fails
                 cameras.append(camera)
             
             return cameras
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error: {e}")
             return []
         finally:
             conn.close()
@@ -279,13 +279,13 @@ class DatabaseManager:
                         # Convert lists back to tuples if needed
                         camera['roi_points'] = [tuple(point) for point in points_data]
                     except json.JSONDecodeError as e:
-                        print(f"Error deserializing ROI points: {e}")
+                        logger.error(f"Error deserializing ROI points: {e}")
                         # Keep as string if deserialization fails
                 
                 return camera
             return None
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error: {e}")
             return None
         finally:
             conn.close()
@@ -314,7 +314,7 @@ class DatabaseManager:
             conn.commit()
             return cursor.rowcount > 0
         except sqlite3.Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error: {e}")
             return False
         finally:
             conn.close()

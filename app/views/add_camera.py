@@ -2,6 +2,8 @@ import sys
 import socket
 import cv2 as cv
 import time
+import logging
+from functools import partial 
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, 
     QLabel, QLineEdit, QPushButton, QFormLayout, 
@@ -12,6 +14,17 @@ from PySide6.QtCore import Qt, QSize, QRegularExpression
 from PySide6.QtGui import QIcon, QFont, QRegularExpressionValidator
 from resources import resource_path
 from views.roi_window import ROISelectorDialog 
+
+logger = logging.getLogger(__name__)
+
+def _refresh_styles(*widgets):
+    """
+    Unpolish/polish sekali untuk sekumpulan widget
+    agar menghindari repaint berulang.
+    """
+    for w in widgets:
+        w.style().unpolish(w)
+        w.style().polish(w)
 
 def validate_ip_address(ip_address, port, timeout=1):
     """Validasi alamat IP dengan mencoba koneksi"""
@@ -309,76 +322,57 @@ class AddCameraDialog(QDialog):
         main_layout.addWidget(button_frame)
     
     def validate_and_accept(self):
-        """Validasi input dan lanjutkan ke pemilihan ROI jika valid"""
-        # Reset error styling
-        self.camera_name.setProperty("invalid", False)
-        self.camera_ip.setProperty("invalid", False)
-        self.stream_path.setProperty("invalid", False)
+        """Validasi input lalu lanjut ke pemilihan ROI jika valid."""
+        for f in (self.camera_name, self.camera_ip, self.stream_path):
+            f.setProperty("invalid", False)
         self.name_error.setText("")
         self.ip_error.setText("")
         self.stream_error.setText("")
-        
-        # Apply style updates
-        for field in [self.camera_name, self.camera_ip, self.stream_path]:
-            field.style().unpolish(field)
-            field.style().polish(field)
-        
-        # Validasi nama
+        _refresh_styles(self.camera_name, self.camera_ip, self.stream_path)   # <<< satu repaint
+
         camera_name = self.camera_name.text().strip()
         if not camera_name:
             self.camera_name.setProperty("invalid", True)
             self.name_error.setText("Camera name is required")
-            self.camera_name.style().unpolish(self.camera_name)
-            self.camera_name.style().polish(self.camera_name)
+            _refresh_styles(self.camera_name)        # <<< repaint sekali saja untuk field ini
             return
-        
-        # Validasi alamat IP
+
         ip_address = self.camera_ip.text().strip()
         if not ip_address:
             self.camera_ip.setProperty("invalid", True)
             self.ip_error.setText("IP address is required")
-            self.camera_ip.style().unpolish(self.camera_ip)
-            self.camera_ip.style().polish(self.camera_ip)
+            _refresh_styles(self.camera_ip)
             return
-        
-        # Validasi stream path
+
         stream_path = self.stream_path.text().strip()
         if not stream_path:
             self.stream_path.setProperty("invalid", True)
             self.stream_error.setText("Stream path is required")
-            self.stream_path.style().unpolish(self.stream_path)
-            self.stream_path.style().polish(self.stream_path)
+            _refresh_styles(self.stream_path)
             return
-        
-        # Validasi koneksi IP
+
         port = self.camera_port.value()
-        
-        # Tampilkan dialog "Checking connection..."
         wait_dialog = QMessageBox(self)
         wait_dialog.setWindowTitle("Validating Connection")
         wait_dialog.setText("Testing connection to camera...")
         wait_dialog.setStandardButtons(QMessageBox.NoButton)
-        
+
         self.setEnabled(False)
-
         wait_dialog.show()
-        QApplication.processEvents()  # Memastikan dialog ditampilkan
+        QApplication.processEvents()
 
-        # Coba koneksi ke kamera
         is_valid = validate_ip_address(ip_address, port, timeout=1)
-        
-        # Tutup dialog
+
         wait_dialog.hide()
         QApplication.processEvents()
         self.setEnabled(True)
-        
+
         if not is_valid:
             self.camera_ip.setProperty("invalid", True)
             self.ip_error.setText("Cannot connect to this IP address and port")
-            self.camera_ip.style().unpolish(self.camera_ip)
-            self.camera_ip.style().polish(self.camera_ip)
+            _refresh_styles(self.camera_ip)
             return
-        
+
         if self.edit_mode:
             self.accept()
         else:
@@ -437,9 +431,9 @@ class AddCameraDialog(QDialog):
                 # Get ROI data if user confirmed
                 self.roi_points, self.roi_image = roi_dialog.get_roi()
 
-                print("ROI Points obtained:", self.roi_points)
-                print("ROI Points type:", type(self.roi_points))
-                print("ROI Image shape:", self.roi_image.shape if self.roi_image is not None else None)
+                logger.debug("ROI Points obtained:", self.roi_points)
+                logger.debug("ROI Points type:", type(self.roi_points))
+                logger.debug("ROI Image shape:", self.roi_image.shape if self.roi_image is not None else None)
                 
                 # Dialog was accepted and ROI was selected, complete the camera addition
                 self.accept()

@@ -1,7 +1,11 @@
 # ping_scheduler.py
+import logging
 from PySide6.QtCore import QRunnable, Signal, QObject
-from views.add_camera import validate_ip_address       # fungsi sudah ada
-                                                        # :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
+from views.add_camera import validate_ip_address
+
+logger = logging.getLogger(__name__) 
+
+
 class PingSignal(QObject):
     finished = Signal(int, bool)        # (camera_id, is_online)
 

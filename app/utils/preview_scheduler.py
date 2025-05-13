@@ -1,9 +1,13 @@
 # preview_scheduler.py
+import logging
+import cv2 as cv
+
 from PySide6.QtCore import QRunnable, Signal, QObject, QMetaObject, Qt
 from PySide6.QtGui  import QImage, QPixmap
 from PySide6.QtCore import QSize
-import cv2 as cv
 from models.camera import Camera, convert_cv_to_pixmap
+
+logger = logging.getLogger(__name__) 
 
 class SnapshotSignal(QObject):
     """Pembungkus sinyal untuk dikirim balik ke GUI‑thread"""

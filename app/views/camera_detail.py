@@ -671,105 +671,74 @@ class CameraDetailUI(QMainWindow):
     
     def edit_roi(self):
         """Open ROI selector dialog and update camera ROI points"""
-        # Check if camera is connected
         if not self.camera_instance:
-            QMessageBox.warning(
-                self,
-                "Camera Not Ready",
-                "Cannot edit ROI while camera is offline. Please ensure camera is connected."
-            )
+            QMessageBox.warning(self, "Camera Not Ready",
+                                "Cannot edit ROI while camera is offline.")
             return
-    
-        # Try to get current frame from camera
+
         current_frame = self.camera_instance.get_last_frame()
         if current_frame is None:
-            QMessageBox.warning(
-                self,
-                "No Frame Available",
-                "Could not get current frame from camera. Try again in a moment."
-            )
+            QMessageBox.warning(self, "No Frame Available",
+                                "Could not get current frame from camera.")
             return
-    
+
         dialog = ROISelectorDialog(current_frame, self)
-    
-        # If ROI selection is confirmed
-        if dialog.exec():
-            roi_points, roi_image = dialog.get_roi()
-        
-            if roi_points:
-                # Update camera instance with new ROI points
-                self.camera_instance.roi_points = roi_points
-            
-                # Convert ROI points to serializable form (tuples to lists)
-                serializable_points = [list(point) for point in roi_points]
-            
-                try:
-                    # Serialize points to JSON string
-                    import json
-                    roi_points_json = json.dumps(serializable_points)
-                
-                    # Update database with new ROI points
-                    if 'id' in self.camera_data:
-                        # Update only ROI points without changing other settings
-                        success = self.db_manager.update_roi_points(self.camera_data['id'], roi_points_json)
-                    
-                        if success:
-                            QMessageBox.information(
-                                self,
-                                "ROI Updated",
-                                "Region of interest has been updated successfully."
-                            )
-                        else:
-                            QMessageBox.warning(
-                                self,
-                                "Update Failed",
-                                "Failed to update ROI in database."
-                            )
-                    else:
-                        QMessageBox.warning(
-                            self,
-                            "Camera ID Missing",
-                            "Could not identify camera ID for database update."
-                        )
-            
-                except Exception as e:
-                    QMessageBox.critical(
-                        self,
-                        "Database Error",
-                        f"Error updating database: {str(e)}"
-                    )
+        if not dialog.exec():
+            return
+
+        roi_points, _ = dialog.get_roi()
+        if not roi_points:
+            return
+
+        # simpan di objek kamera
+        self.camera_instance.roi_points = roi_points
+
+        # konversi ke JSON
+        roi_points_json = json.dumps([list(p) for p in roi_points])
+
+        if 'id' not in self.camera_data:
+            QMessageBox.warning(self, "Camera ID Missing",
+                                "Could not identify camera ID for database update.")
+            return
+
+        worker = DBWorker("update_roi_points", self.camera_data['id'], roi_points_json)
+        worker.signals.finished.connect(
+            lambda ok: QMessageBox.information(
+                self,
+                "ROI Updated" if ok else "Update Failed",
+                "Region of interest has been updated successfully."
+                if ok else "Failed to update ROI in database."
+            )
+        )
+        worker.signals.error.connect(lambda err: QMessageBox.critical(self, "DB Error", err))
+        QThreadPool.globalInstance().start(worker)
     
     def show_data_logs(self):
-        """Buka File Explorer ke folder log kamera ini."""
-        try:
-            cam_id = self.camera_data.get('id')
-            if not cam_id:
-                QMessageBox.warning(self, "Missing ID", "Camera ID not found.")
-                return
+        cam_id = self.camera_data.get('id')
+        if not cam_id:
+            QMessageBox.warning(self, "Missing ID", "Camera ID not found.")
+            return
 
-            # Pastikan buffer sudah disimpan
-            self.coverage_logger.flush()
+        folder_path = self.coverage_logger._get_camera_dir(cam_id)
 
-            # Dapatkan folder log kamera
-            folder_path = self.coverage_logger._get_camera_dir(cam_id)
-
-            # 1) Coba cara Qt (cross‑platform)
+        # ⇩ ganti blok sinkron ⇩
+        def _open_folder():
+            # Qt‑way dulu
             if QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path)):
                 return
-
-            # 2) Fallback native per‑OS
+            # Fallback native
             if sys.platform == "win32":
                 os.startfile(folder_path)
             elif sys.platform == "darwin":
                 subprocess.call(["open", folder_path])
-            else:  # Linux & lainnya
+            else:
                 subprocess.call(["xdg-open", folder_path])
 
-        except Exception as e:
-            QMessageBox.critical(self, "Open Logs Error", str(e))
+        # non‑blocking flush
+        self.coverage_logger.flush_async(_open_folder)
 
     def handle_camera_error(self, msg):
-        print(f"[CameraError] {msg}")
+        logger.warning(f"[CameraError] {msg}")
         self.video_display.set_connecting_message()
 
     def handle_connection_change(self, ok):
@@ -808,7 +777,7 @@ class CameraDetailUI(QMainWindow):
             self.coverage_logger.flush()
             self.coverage_logger.stop()
         except Exception as e:
-            print(f"[CoverageLogger] gagal shutdown: {e}")
+            logger.warning(f"[CoverageLogger] gagal shutdown: {e}")
         
         parent = self.parent()
         if parent is not None:
@@ -816,6 +785,7 @@ class CameraDetailUI(QMainWindow):
             if hasattr(parent, "_detail_window"):
                 parent._detail_window = None
 
+        self.coverage_logger.flush_async(lambda: self.coverage_logger.stop())
         super().closeEvent(event)
 
 

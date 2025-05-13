@@ -4,7 +4,7 @@ import datetime
 import threading
 import queue
 
-from PySide6.QtCore import QStandardPaths
+from PySide6.QtCore import QStandardPaths, QRunnable, QThreadPool, QMetaObject, Qt
 
 # Lokasi default: Dokumen → EyeLog → DataLogs
 DEFAULT_LOG_DIR = os.path.join(
@@ -91,6 +91,32 @@ class CoverageLogger:
         Tunggu hingga seluruh antrian kosong (semua data sudah ditulis ke file).
         """
         self._queue.join()
+
+    class _FlushRunner(QRunnable):
+        """Jalankan CoverageLogger.flush() di thread‑pool global."""
+        def __init__(self, logger, finished_cb=None):
+            super().__init__()
+            self._logger      = logger
+            self._finished_cb = finished_cb
+
+        def run(self):
+            self._logger.flush()
+            if callable(self._finished_cb):
+                # Pastikan callback dieksekusi di GUI thread
+                QMetaObject.invokeMethod(
+                    self._finished_cb, "__call__", Qt.QueuedConnection
+                )
+
+    def flush_async(self, finished_cb=None):
+        """
+        Jalankan flush() tanpa mem‑blok UI.
+        Args
+        ----
+        finished_cb : fungsi | lambda | None
+            Dipanggil di GUI thread setelah semua antrian kosong.
+        """
+        runner = _FlushRunner(self, finished_cb)
+        QThreadPool.globalInstance().start(runner)
 
     def _get_camera_dir(self, camera_id):
         path = os.path.join(self.base_dir, f"camera_{camera_id}")

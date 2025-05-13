@@ -3,8 +3,11 @@ import numpy as np
 import time
 import json
 import psutil
+import logging
 from PySide6.QtCore import Qt, QThread, Signal, QMutex, QMutexLocker, QSize
 from PySide6.QtGui import QImage, QPixmap
+
+logger = logging.getLogger(__name__) 
 
 FPS_PREVIEW = 5 
 FPS_DETAIL  = 15
@@ -123,13 +126,13 @@ class Camera:
             else:
                 self.last_error = "Gagal membuka koneksi kamera"
                 import logging
-                logging.debug(f"Koneksi gagal: {self.last_error}")
+                logging.error(f"Koneksi gagal: {self.last_error}")
                 return False
                 
         except Exception as e:
             self.connection_status = False
             self.last_error = str(e)
-            print(f"Error koneksi: {self.last_error}")
+            logger.error(f"Error koneksi: {self.last_error}")
             return False
     
     def disconnect(self):
@@ -513,7 +516,7 @@ if __name__ == "__main__":
     
     def handle_error(error_message):
         """Callback saat error terjadi"""
-        print(f"Error: {error_message}")
+        logger.error(f"Error: {error_message}")
     
     # Connect signals
     camera.thread = CameraThread(camera)

@@ -394,18 +394,23 @@ class CameraThread(QThread):
         while self.running:
             try:
                 if self.camera.connection_status:
-                    # Dengan mutex untuk thread safety
                     with QMutexLocker(self.camera.mutex):
                         if self.camera.capture is not None:
                             ret, frame = self.camera.capture.read()
                             
                             if ret:
-                                # Reset counter error jika berhasil
                                 consecutive_errors = 0
-
-                                # Simpan frame dan emit signal
                                 self.camera.last_frame = frame
                                 self.frame_received.emit(frame)
+
+                                frame_counter += 1
+                                elapsed_time = time.time() - start_time
+
+                                if elapsed_time >= 1.0:
+                                    fps = frame_counter / elapsed_time
+                                    logger.info(f"[Camera {self.camera.name}] FPS saat ini: {fps:.2f}")
+                                    frame_counter = 0
+                                    start_time = time.time()
                             else:
                                 # Frame tidak berhasil dibaca
                                 consecutive_errors += 1

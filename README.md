@@ -17,6 +17,8 @@
 - **Matplotlib** untuk visualisasi
 
 ## 📂 Struktur Proyek
+
+```
 opencv-py-pdu/
 ├── app/
 │ ├── assets/ (font, ikon, gambar)
@@ -40,6 +42,7 @@ opencv-py-pdu/
 ├── requirements.txt (dependensi aplikasi)
 ├── README.md
 └── .gitignore
+```
 
 ## 🚀 Cara Instalasi untuk Tujuan Pembelajaran
 Clone repositori ini dan instal dependensi melalui pip:

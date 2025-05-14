@@ -22,18 +22,19 @@ opencv-py-pdu/
 │ ├── assets/ (font, ikon, gambar)
 │ ├── models/ (database, kamera)
 │ ├── tests/ (unit testing)
-│ ├── utils/ (modul tambahan seperti log, scheduler, deteksi material)
-│ ├── views/ (antarmuka UI seperti tambah kamera, detail kamera, dll.)
-│ ├── init.py
+│ ├── utils/ (log, scheduler, deteksi material)
+│ ├── views/ (UI seperti tambah kamera, detail kamera)
+│ ├── init.py (inisialisasi aplikasi)
 │ ├── main_window.py (file utama aplikasi)
 │ └── resources.py (pengelolaan path asset)
 ├── database/
 │ └── eyelog_database.db (file database SQLite)
 ├── machine_learning/
-│ ├── main.py
-│ ├── material_detector.py (modul deteksi material OpenCV)
+│ ├── main.py (skrip utama ML)
+│ ├── material_detector.py(modul deteksi material OpenCV)
 │ └── roi_selector.py (modul seleksi ROI OpenCV)
 ├── flowchart/
+│ └── flowchart-desktop-app.mermaid (diagram alur aplikasi)
 ├── backups/ (folder backup code)
 ├── EyeLog.spec (konfigurasi build PyInstaller)
 ├── requirements.txt (dependensi aplikasi)

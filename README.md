@@ -1,15 +1,15 @@
-# EyeLog - Aplikasi Pemantauan Kamera Realtime
+# EyeLog - Computer Vision Realtime Monitoring
 
 **EyeLog** adalah aplikasi desktop yang mengelola pemantauan kamera secara realtime, dilengkapi dengan analisis berbasis OpenCV dan antarmuka intuitif menggunakan PySide6.
 
-## 📌 Fitur Utama
+## 📌 Main Feature
 - Pemantauan realtime melalui protokol RTSP.
 - Deteksi area cakupan menggunakan OpenCV dengan berbagai mode latar belakang.
 - Dukungan multi-kamera dengan pengaturan dan manajemen yang mudah.
 - Visualisasi area cakupan secara real-time dengan grafik interaktif.
 - Log otomatis dan penyimpanan data untuk analisis historis.
 
-## 🛠️ Teknologi yang Digunakan
+## 🛠️ Tech Stacks
 - **Python 3.12**
 - **PySide6**
 - **OpenCV**
@@ -44,7 +44,7 @@ opencv-py-pdu/
 └── .gitignore
 ```
 
-## 🚀 Cara Instalasi untuk Tujuan Pembelajaran
+## 🚀 Instalation
 Clone repositori ini dan instal dependensi melalui pip:
 
 ```bash

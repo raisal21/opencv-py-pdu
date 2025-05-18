@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize, QRegularExpression
 from PySide6.QtGui import QIcon, QFont, QRegularExpressionValidator
 from resources import resource_path
-from views.roi_window import ROISelectorDialog 
+from views.roi_window import ROISelectorDialog
 
 logger = logging.getLogger(__name__)
 

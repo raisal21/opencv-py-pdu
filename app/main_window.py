@@ -20,6 +20,10 @@ from utils.log import setup as setup_log
 from utils.db_worker import DBWorker
 from utils.ping_scheduler import PingWorker
 from utils.preview_scheduler import SnapshotWorker
+from utils.coverage_monitor import CoverageMonitor
+from utils.notification_center import NotificationCenter
+from views.notification_dialog import NotificationDialog
+
 
 setup_log("--debug" in sys.argv)  
 
@@ -310,7 +314,8 @@ class CameraList(QWidget):
     """Widget kontainer yang menampilkan daftar kamera"""
     
     # Signal untuk navigasi ke detail kamera
-    open_camera_detail = Signal(int)  # Emit camera_id untuk dibuka
+    open_camera_detail = Signal(int)
+    danger_received = Signal(int, float)
     
     def __init__(self, db_manager, parent=None):
         super().__init__(parent)
@@ -322,6 +327,21 @@ class CameraList(QWidget):
         
         # Dictionary untuk menyimpan instance kamera aktif
         self.active_cameras = {}
+        camera_list = self.db_manager.get_all_cameras()
+        self.monitors = {}
+
+        for camera_data in camera_list:
+            cam_id = camera_data['id']
+            if cam_id in self.active_cameras:
+                try:
+                    monitor = CoverageMonitor(self.active_cameras[cam_id])
+                    self.monitors[cam_id] = monitor
+                    self.active_cameras[camera_data['id']]._monitor = monitor
+
+                except Exception as e:
+                    print(f"Gagal inisiasi monitor untuk kamera {cam_id}: {e}")
+            else:
+                print(f"Kamera ID {cam_id} tidak ditemukan di active_cameras")
 
         self.ping_pool   = QThreadPool.globalInstance()
         self.ping_pool.setMaxThreadCount(4)
@@ -433,6 +453,12 @@ class CameraList(QWidget):
 
         self.empty_label.setVisible(True)
 
+        for cam in self.active_cameras.values():
+            mon = getattr(cam, "_monitor", None)
+            if mon:
+                mon.stop()
+        self.active_cameras.clear()
+
         worker = DBWorker("get_all_cameras")
         worker.signals.finished.connect(self._populate_camera_list)   # method baru
         worker.signals.error.connect(lambda err: print("[DB]", err))
@@ -466,7 +492,18 @@ class CameraList(QWidget):
 
             # simpan objek Camera supaya PreviewWorker bisa pakai
             self.active_cameras[camera_data['id']] = Camera.from_dict(camera_data)
+            self._start_monitor(self.active_cameras[camera_data['id']])
     
+    def _start_monitor(self, cam):
+        """
+        Menyalakan CoverageMonitor di background.
+        - Save CSV tiap 5 menit  - Throttle notifikasi 5 menit
+        """
+        mon = CoverageMonitor(cam, log_interval=300, notif_delay=300)
+        mon.danger.connect(lambda cid, p: self.danger_received.emit(cid, p))
+        cam._monitor = mon      # simpan referensi supaya bisa di-stop
+        mon.start() 
+
     def _show_empty_state(self):
         """
         Tampilkan label “No cameras …” — buat ulang jika label sudah ter‑delete.
@@ -527,6 +564,7 @@ class CameraList(QWidget):
             'protocol': protocol, 'username': username, 'password': password,
             'stream_path': stream_path, 'url': url, 'roi_points': roi_points
         })
+        self._start_monitor(self.active_cameras[camera_id])
     
     def edit_camera(self, camera_id):
         camera_data = self.db_manager.get_camera(camera_id)
@@ -602,6 +640,11 @@ class CameraList(QWidget):
             return
 
         # hapus item dari dict & layout, atau reload penuh
+        cam = self.active_cameras.get(camera_id)
+        if cam:
+            monitor = getattr(cam, "_monitor", None)
+            if monitor:
+                monitor.stop()
         self.active_cameras.pop(camera_id, None)
         self.load_cameras()                   # paling sederhana
 
@@ -656,8 +699,7 @@ class CameraList(QWidget):
     def hideEvent(self, e):
         super().hideEvent(e)
         self.preview_timer.stop()
-        self.ping_timer.stop()
-
+        self.ping_timer.stop()            # non-blocking (di thread sendiri)
 
 
 class MainWindow(QMainWindow):
@@ -673,6 +715,9 @@ class MainWindow(QMainWindow):
         
         # Setup UI
         self.setup_ui()
+        self.notif_center = NotificationCenter(self)
+        self.notif_center.new_notification.connect(self._highlight_notif_icon)
+        self.camera_list.danger_received.connect(self._on_coverage_danger)
         
         # Setup timer untuk jam
         self.update_clock()
@@ -752,7 +797,8 @@ class MainWindow(QMainWindow):
         """)
         notification_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         notification_button.clicked.connect(self.show_notification_dialog)
-        
+        self.notification_button = notification_button
+
         # Add widgets to header
         header_layout.addWidget(header_icon_label)
         header_layout.addSpacing(4)
@@ -826,16 +872,11 @@ class MainWindow(QMainWindow):
         self.clock_text_label.setText(current_time)
     
     def show_notification_dialog(self):
-        """
-        Tampilkan dialog modal yang menandakan fitur belum tersedia.
-        QMessageBox.exec() membuat dialog ini modal sehingga
-        jendela utama tidak bisa dioperasikan sebelum ditekan OK.
-        """
-        QMessageBox.information(
-            self,
-            "Coming Soon",
-            "This feature is under construction / not implemented yet.",
-            QMessageBox.Ok
+        dlg = NotificationDialog(self.notif_center.all(), self)
+        dlg.exec()
+        # setelah dialog ditutup, reset highlight
+        self.notification_button.setIcon(
+            QIcon(resource_path("assets/icons/bell.png"))
         )
 
     def update_status_bar(self):
@@ -879,6 +920,16 @@ class MainWindow(QMainWindow):
                     "Add Failed",
                     "Failed to add camera. Please try again."
                 )
+
+    def _on_coverage_danger(self, cam_id: int, percent: float):
+        cam = self.camera_list.active_cameras.get(cam_id)
+        name = cam.name if cam else f"Camera {cam_id}"
+        self.notif_center.add(cam_id, f"Coverage {percent:.1f}% (danger)", name)
+    
+    def _highlight_notif_icon(self, _data):
+        self.notification_button.setIcon(
+            QIcon(resource_path("assets/icons/bell-alert.png"))
+        )
     
     def open_camera_detail(self, camera_id):
         """Buka halaman detail kamera"""
@@ -889,6 +940,12 @@ class MainWindow(QMainWindow):
             from views.camera_detail import CameraDetailUI
             camera_detail = CameraDetailUI(camera_data, parent=self)
 
+            cam = self.camera_list.active_cameras.get(camera_id)
+            if cam:
+                mon = getattr(cam, "_monitor", None)
+                if mon:
+                    mon.stop()
+            cam._monitor = None 
             self.hide()
             self._detail_window = camera_detail
 
@@ -900,7 +957,12 @@ class MainWindow(QMainWindow):
                 "Camera Not Found",
                 f"Camera with ID {camera_id} not found."
             )
-
+    def closeEvent(self, event):
+        for cam in self.camera_list.active_cameras.values():
+            mon = getattr(cam, "_monitor", None)
+            if mon:
+                mon.stop()
+        super().closeEvent(event)
 
 
 if __name__ == "__main__":

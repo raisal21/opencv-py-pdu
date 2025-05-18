@@ -23,12 +23,12 @@ class MaterialMonitoringApp:
     # UI Constants
     WINDOW_TITLE_MAIN = "Material Monitoring"
     WINDOW_TITLE_ROI = "Select Monitoring Region"
-    WINDOW_TITLE_FOREGROUND = "Foreground Extraction"  # New window title
+    WINDOW_TITLE_FOREGROUND = "Foreground Extraction"
     WINDOW_TITLE_ANALYSIS = "Material Analysis"
 
     # Color constants
-    ROI_COLOR = (0, 149, 255)  # Orange color (BGR format) - same as in ROISelector
-    TEXT_COLOR = (0, 0, 255)  # Red (BGR)
+    ROI_COLOR = (0, 149, 255)
+    TEXT_COLOR = (0, 0, 255) 
     TEXT_FONT = cv.FONT_HERSHEY_SIMPLEX
     TEXT_SCALE = 0.7
     TEXT_THICKNESS = 2

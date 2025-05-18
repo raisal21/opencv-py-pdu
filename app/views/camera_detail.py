@@ -781,6 +781,12 @@ class CameraDetailUI(QMainWindow):
         
         parent = self.parent()
         if parent is not None:
+            # －－ Tambah blok ini persis sebelum parent.show() －－
+            if hasattr(parent, "camera_list"):
+                cam = parent.camera_list.active_cameras.get(self.camera_data["id"])
+                if cam and not getattr(cam, "_monitor", None):
+                    parent.camera_list._start_monitor(cam)
+
             parent.show()
             if hasattr(parent, "_detail_window"):
                 parent._detail_window = None

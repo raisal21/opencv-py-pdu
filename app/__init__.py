@@ -3,7 +3,9 @@ from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QFontDatabase, QFont
 import os
 from resources import resource_path
+from utils.log import setup as setup_logging
 
+setup_logging(debug=True)
 
 def load_fonts():
     """Load the Inter font family into the application"""

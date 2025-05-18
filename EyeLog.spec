@@ -6,7 +6,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        'app/assets/**, 'assets'
+        ('app/assets/**', 'assets')
     ],
     hiddenimports=[
         'PySide6.QtCharts',
@@ -25,7 +25,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    icon= 'assets/icons/eyelog.ico
+    icon= 'assets/icons/eyelog.ico'
     name='EyeLog',
     debug=False,
     bootloader_ignore_signals=False,

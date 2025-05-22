@@ -7,6 +7,7 @@ import logging
 from PySide6.QtCore import Qt, QThread, Signal, QMutex, QMutexLocker, QSize
 from PySide6.QtGui import QImage, QPixmap
 
+
 logger = logging.getLogger(__name__) 
 
 FPS_PREVIEW = 5 
@@ -63,6 +64,8 @@ class Camera:
         # Thread dan mutex
         self.mutex = QMutex()
         self.thread = None
+        self._is_disconnecting = False
+
     def build_stream_url(self):
         """
         Membuat URL lengkap untuk stream kamera RTSP.
@@ -96,7 +99,16 @@ class Camera:
         Returns:
             bool: True jika koneksi berhasil, False jika gagal
         """
+        if self._is_disconnecting:
+            logger.warning(f"[Camera] Cannot connect {self.name} - disconnect in progress")
+            return False
+
         try:
+            with QMutexLocker(self.mutex):
+                if self.capture is not None and self.capture.isOpened():
+                    # Jangan release di sini! Biarkan thread yang handle
+                    logger.warning(f"[Camera] Existing connection found for {self.name}, ignoring")
+                    return True
             # Tutup koneksi yang ada jika ada
             if self.capture is not None and self.capture.isOpened():
                 self.capture.release()
@@ -138,19 +150,50 @@ class Camera:
     def disconnect(self):
         """
         Memutuskan koneksi kamera dan membersihkan resource.
+        PENTING: Harus dipanggil dari main thread!
         """
+        logger.info(f"[Camera] Disconnecting {self.name}")
+    
+        # Step 1: Stop thread jika ada
         if self.thread and self.thread.isRunning():
+            # Connect ke signal cleanup untuk tahu kapan selesai
+            cleanup_done = False
+        
+            def on_cleanup_finished():
+                nonlocal cleanup_done
+                cleanup_done = True
+            
+            self.thread.cleanup_finished.connect(on_cleanup_finished)
+        
+            # Request thread stop (yang akan trigger cleanup di thread itu sendiri)
             self.thread.stop()
+        
+            # Wait for cleanup dengan timeout
+            timeout = 5000  # 5 detik
+            start_time = time.time()
+        
+            while not cleanup_done and (time.time() - start_time) * 1000 < timeout:
+                QApplication.processEvents()  # Keep UI responsive
+                time.sleep(0.01)
+        
+            if not cleanup_done:
+                logger.error(f"[Camera] Cleanup timeout for {self.name}")
+
+           # Cleanup thread object
             self.thread.deleteLater()
             self.thread = None
-        
+    
+        # Step 2: JANGAN release capture di sini! 
+        # Sudah di-handle di thread dengan _cleanup_camera_resources()
+    
+        # Step 3: Reset state (tanpa menyentuh capture)
         with QMutexLocker(self.mutex):
-            if self.capture is not None:
-                self.capture.release()
-                self.capture = None
-            
+            # Hanya reset state, JANGAN sentuh capture!
             self.connection_status = False
             self.last_frame = None
+            # self.capture sudah di-set None oleh thread
+        
+        logger.info(f"[Camera] Disconnected {self.name}")
     
     def start_stream(self):
         """
@@ -358,6 +401,7 @@ class CameraThread(QThread):
     frame_received = Signal(np.ndarray)
     error_occurred = Signal(str)
     connection_changed = Signal(bool)
+    cleanup_finished = Signal()
     
     def __init__(self, camera, target_fps=15): 
         """
@@ -370,7 +414,14 @@ class CameraThread(QThread):
         self.camera = camera
         self._target_fps = max(1, target_fps)
         self.frame_interval = int(1000 / self._target_fps)
-        self._frame_counter = 0 
+        self._frame_counter = 0
+        self._stop_requested = False
+        self._cleanup_done = False
+    
+    def request_stop(self):
+        """Request thread untuk berhenti dengan aman"""
+        logger.info(f"[CameraThread] Stop requested for camera {self.camera.name}")
+        self._stop_requested = True
 
     def set_target_fps(self, fps: int):
         """
@@ -388,76 +439,129 @@ class CameraThread(QThread):
         """
         self.running = True
         consecutive_errors = 0
-
         frame_counter = 0
-        start_time    = time.time()
+        start_time = time.time()
         
-        while self.running:
-            try:
-                if self.camera.connection_status:
-                    with QMutexLocker(self.camera.mutex):
-                        if self.camera.capture is not None:
-                            ret, frame = self.camera.capture.read()
-                            
-                            if ret:
-                                consecutive_errors = 0
-                                self.camera.last_frame = frame
-                                self.frame_received.emit(frame)
-
-                                frame_counter += 1
-                                elapsed_time = time.time() - start_time
-
-                                if elapsed_time >= 1.0:
-                                    fps = frame_counter / elapsed_time
-                                    logger.info(f"[Camera {self.camera.name}] FPS saat ini: {fps:.2f}")
-                                    frame_counter = 0
-                                    start_time = time.time()
+        try:
+            while self.running and not self._stop_requested:
+                try:
+                    if self.camera.connection_status:
+                        with QMutexLocker(self.camera.mutex):
+                            # Double check capture masih valid
+                            if self.camera.capture is not None and self.camera.capture.isOpened():
+                                ret, frame = self.camera.capture.read()
+                                
+                                if ret and frame is not None:
+                                    consecutive_errors = 0
+                                    # Simpan frame original
+                                    self.camera.last_frame = frame
+                                    # Emit COPY untuk thread safety
+                                    self.frame_received.emit(frame.copy())
+                                    
+                                    frame_counter += 1
+                                    elapsed_time = time.time() - start_time
+                                    
+                                    if elapsed_time >= 1.0:
+                                        fps = frame_counter / elapsed_time
+                                        logger.debug(f"[Camera {self.camera.name}] FPS: {fps:.2f}")
+                                        frame_counter = 0
+                                        start_time = time.time()
+                                else:
+                                    # Frame tidak berhasil dibaca
+                                    consecutive_errors += 1
+                                    if consecutive_errors >= 5:
+                                        logger.warning(f"[Camera {self.camera.name}] Failed to read frame 5x")
+                                        self.camera.connection_status = False
+                                        self.connection_changed.emit(False)
+                                        self.error_occurred.emit("Gagal membaca frame dari kamera")
                             else:
-                                # Frame tidak berhasil dibaca
-                                consecutive_errors += 1
-                                if consecutive_errors >= 5:  # Batas error berturut-turut
-                                    self.camera.connection_status = False
-                                    self.connection_changed.emit(False)
-                                    self.error_occurred.emit("Gagal membaca frame dari kamera")
-                else:
-                    # Coba reconnect otomatis
-                    if self.camera.try_reconnect():
-                        self.connection_changed.emit(True)
-                        consecutive_errors = 0
-            
-            except Exception as e:
-                consecutive_errors += 1
-                self.error_occurred.emit(f"Error saat streaming: {str(e)}")
+                                # Capture sudah tidak valid
+                                self.camera.connection_status = False
+                                self.connection_changed.emit(False)
+                                break
+                    else:
+                        # Coba reconnect otomatis jika tidak di-stop
+                        if not self._stop_requested and self.camera.try_reconnect():
+                            self.connection_changed.emit(True)
+                            consecutive_errors = 0
                 
-                if consecutive_errors >= 5:
-                    self.camera.connection_status = False
-                    self.connection_changed.emit(False)
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.error(f"[Camera {self.camera.name}] Error: {str(e)}")
+                    self.error_occurred.emit(f"Error saat streaming: {str(e)}")
+                    
+                    if consecutive_errors >= 5:
+                        self.camera.connection_status = False
+                        self.connection_changed.emit(False)
+                
+                # Check stop request sebelum sleep
+                if self._stop_requested:
+                    break
+                    
+                # Adaptif FPS control
+                self._frame_counter += 1
+                if self._frame_counter % 15 == 0:
+                    cpu_now = psutil.cpu_percent(interval=None)
+                    if cpu_now > CPU_HIGH_THRESHOLD and self._target_fps > FPS_IDLE:
+                        self.set_target_fps(max(self._target_fps // 2, FPS_IDLE))
+                
+                # Delay dengan interruptible sleep
+                self.msleep(self.frame_interval)
+                
+        finally:
+            # CRITICAL: Cleanup HARUS di thread yang sama!
+            self._cleanup_camera_resources()
+
+    def _cleanup_camera_resources(self):
+        """Cleanup camera resources dengan aman di thread yang sama"""
+        logger.info(f"[CameraThread] Cleaning up resources for {self.camera.name}")
+        
+        with QMutexLocker(self.camera.mutex):
+            if self.camera.capture is not None:
+                try:
+                    # Release capture di thread yang sama yang melakukan read!
+                    self.camera.capture.release()
+                    logger.info(f"[CameraThread] VideoCapture released for {self.camera.name}")
+                except Exception as e:
+                    logger.error(f"[CameraThread] Error releasing capture: {e}")
+                finally:
+                    self.camera.capture = None
             
-            # Interval untuk mengurangi CPU usage
-            self._frame_counter += 1
-
-            # Adaptif: kurangi FPS jika CPU tinggi
-            if self._frame_counter % 15 == 0:
-                cpu_now = psutil.cpu_percent(interval=None)
-                if cpu_now > CPU_HIGH_THRESHOLD and self._target_fps > FPS_IDLE:
-                    self.set_target_fps(max(self._target_fps // 2, FPS_IDLE))
-
-            # Delay agar sesuai target_fps
-            self.msleep(self.frame_interval)
+            # Reset connection status
+            self.camera.connection_status = False
+            self.camera.last_frame = None
+            
+        self._cleanup_done = True
+        self.cleanup_finished.emit()
     
     def stop(self):
         """
         Menghentikan thread dengan aman.
+        JANGAN panggil capture.release() di sini!
         """
+        logger.info(f"[CameraThread] Stopping thread for {self.camera.name}")
+        
+        # Request stop
         self.running = False
+        self._stop_requested = True
+        
         self.quit()
-        self.wait()
+        
+        # Wait dengan timeout
+        if not self.wait(5000):  # 5 detik timeout
+            logger.error(f"[CameraThread] Thread failed to stop gracefully for {self.camera.name}")
+        else:
+            logger.info(f"[CameraThread] Thread stopped successfully for {self.camera.name}")
 
 
 # Fungsi utilitas untuk konversi frame
 def convert_cv_to_pixmap(cv_frame, target_size=None):
     """
+    DEPRECATED: Jangan gunakan fungsi ini di worker thread!
+    Gunakan convert_cv_to_qimage() lalu konversi ke QPixmap di main thread.
+    
     Mengkonversi frame OpenCV (numpy array) ke QPixmap untuk tampilan di Qt.
+    PERINGATAN: Fungsi ini HANYA boleh dipanggil dari MAIN THREAD!
     
     Args:
         cv_frame: numpy.ndarray frame dari OpenCV (format BGR)
@@ -468,6 +572,10 @@ def convert_cv_to_pixmap(cv_frame, target_size=None):
     """
     if cv_frame is None:
         return QPixmap()
+
+    if QThread.currentThread() != QApplication.instance().thread():
+        logger.error("convert_cv_to_pixmap() dipanggil dari worker thread! Ini berbahaya!")
+        return QPixmap()
     
     # Konversi BGR ke RGB
     rgb_frame = cv.cvtColor(cv_frame, cv.COLOR_BGR2RGB)
@@ -475,10 +583,11 @@ def convert_cv_to_pixmap(cv_frame, target_size=None):
     # Konversi ke QImage
     h, w, ch = rgb_frame.shape
     bytes_per_line = ch * w
-    image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+
+    qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
     
     # Konversi ke QPixmap
-    pixmap = QPixmap.fromImage(image)
+    pixmap = QPixmap.fromImage(qt_image)
     
     # Resize jika target_size diberikan
     if target_size is not None:
@@ -490,11 +599,34 @@ def convert_cv_to_pixmap(cv_frame, target_size=None):
     return pixmap
 
 def convert_cv_to_qimage(cv_frame) -> QImage:
-    """BGR numpy → QImage.Format_RGB888"""
-    h, w, ch = cv_frame.shape
-    bytes_per_line = ch * w
-    cv_rgb = cv.cvtColor(cv_frame, cv.COLOR_BGR2RGB)
-    return QImage(cv_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+    """
+    Mengkonversi BGR numpy array ke QImage.Format_RGB888
+    AMAN untuk dipanggil dari worker thread.
+    
+    Args:
+        cv_frame: numpy array dalam format BGR dari OpenCV
+        
+    Returns:
+        QImage: Gambar yang sudah di-copy (aman dari dangling pointer)
+    """
+
+    if cv_frame is None:
+        return QImage()
+        
+    try:
+        h, w, ch = cv_frame.shape
+        bytes_per_line = ch * w
+        
+        # Konversi BGR ke RGB
+        cv_rgb = cv.cvtColor(cv_frame, cv.COLOR_BGR2RGB)
+        
+        # CRITICAL FIX: SELALU copy untuk mencegah segfault
+        # Ini mencegah QImage mengakses memory numpy yang sudah di-GC
+        return QImage(cv_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+        
+    except Exception as e:
+        logger.error(f"Error converting cv frame to QImage: {e}")
+        return QImage()
 
 
 # Contoh penggunaan dasar:

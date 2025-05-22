@@ -27,6 +27,43 @@ from views.notification_dialog import NotificationDialog
 
 setup_log("--debug" in sys.argv)  
 
+def cleanup_camera(camera):
+    """
+    Helper untuk cleanup camera dengan aman.
+    Bisa dipanggil multiple kali tanpa error.
+    """
+    if not camera:
+        return
+        
+    try:
+        # Check if camera has disconnect method
+        if hasattr(camera, 'disconnect'):
+            logger.info(f"Cleaning up camera: {getattr(camera, 'name', 'Unknown')}")
+            
+            # Check if already disconnecting
+            if getattr(camera, '_is_disconnecting', False):
+                logger.debug("Camera already disconnecting, skipping")
+                return
+                
+            # Mark as disconnecting
+            camera._is_disconnecting = True
+            
+            # Call disconnect
+            camera.disconnect()
+            
+            # Process events to ensure cleanup
+            QApplication.processEvents()
+            
+            # Small delay for safety
+            time.sleep(0.05)
+            
+    except Exception as e:
+        logger.error(f"Error during camera cleanup: {e}")
+    finally:
+        # Reset flag
+        if hasattr(camera, '_is_disconnecting'):
+            camera._is_disconnecting = False
+
 
 class DeleteCameraDialog(QDialog):
     """Dialog konfirmasi penghapusan kamera"""
@@ -258,6 +295,11 @@ class CameraItem(QFrame):
     
     def set_preview(self, image):
         """Set gambar preview kamera"""
+        if QThread.currentThread() != QApplication.instance().thread():
+            # Kalau di worker thread, schedule ke main thread
+            QTimer.singleShot(0, lambda: self.set_preview(image))
+            return
+
         if isinstance(image, QPixmap):
             pixmap = image
         elif isinstance(image, QImage):
@@ -276,11 +318,17 @@ class CameraItem(QFrame):
 
     def _update_preview_label(self, frame):
         """Slot: terima frame dari CameraThread & tampilkan di QLabel preview."""
-        pixmap = convert_cv_to_pixmap(frame, QSize(160, 90))
-        if not pixmap.isNull():
+        qimage = convert_cv_to_qimage(frame)  
+        if not qimage.isNull():
+            # Emit QImage ke main thread untuk dikonversi ke QPixmap
+            QTimer.singleShot(0, lambda: self._set_preview_pixmap(qimage))
+    
+    def _set_preview_pixmap(self, qimage):
+        """Helper method yang PASTI berjalan di main thread"""
+        if qimage and not qimage.isNull():
+            pixmap = QPixmap.fromImage(qimage)
+            pixmap = pixmap.scaled(160, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.preview_widget.setPixmap(pixmap)
-            # hapus teks/offline‑bg jika masih ada
-            self.preview_widget.setStyleSheet("border-radius: 4px;")
 
     def update_status(self, is_online: bool):
         self.is_online = is_online
@@ -462,6 +510,7 @@ class CameraList(QWidget):
             mon = getattr(cam, "_monitor", None)
             if mon:
                 mon.stop()
+            cleanup_camera(cam)
         self.active_cameras.clear()
 
         worker = DBWorker("get_all_cameras")
@@ -657,6 +706,7 @@ class CameraList(QWidget):
             monitor = getattr(cam, "_monitor", None)
             if monitor:
                 monitor.stop()
+            cleanup_camera(cam)
         self.active_cameras.pop(camera_id, None)
         self.load_cameras()                   # paling sederhana
 
@@ -971,10 +1021,21 @@ class MainWindow(QMainWindow):
                 f"Camera with ID {camera_id} not found."
             )
     def closeEvent(self, event):
+        logger.info("MainWindow closing, cleaning up resources...")
+    
+        # Stop semua monitors
         for cam in self.camera_list.active_cameras.values():
             mon = getattr(cam, "_monitor", None)
             if mon:
                 mon.stop()
+        
+            # TAMBAH: Disconnect camera dengan aman
+            cleanup_camera(cam)
+    
+        # Tunggu semua cleanup selesai
+        QApplication.processEvents()
+        time.sleep(0.1)
+
         super().closeEvent(event)
 
 

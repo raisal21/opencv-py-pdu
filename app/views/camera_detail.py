@@ -630,6 +630,10 @@ class CameraDetailUI(QMainWindow):
                 Tak perlu panggil start_stream dua kali agar VideoCapture
                 tidak dibuat ganda (menghindari seg-fault FFmpeg).
                 """
+                if not self.camera_instance:
+                    self.video_display.set_error_message("Camera instance lost")
+                    return
+
                 # pastikan terhubung sekali saja
                 if not self.camera_instance.connection_status:
                     if not self.camera_instance.connect():
@@ -638,6 +642,9 @@ class CameraDetailUI(QMainWindow):
                         else:
                             self.video_display.set_error_message("Gagal konek kamera.")
                         return
+
+                if not self.camera_instance.thread or not self.camera_instance.thread.isRunning():
+                    self.camera_instance.start_stream()
 
                 # naikkan FPS ke mode detail (15 fps)
                 self.camera_instance.set_preview_mode(False)
@@ -656,21 +663,26 @@ class CameraDetailUI(QMainWindow):
                     )
                     self.frame_processor.moveToThread(self.worker_thread)
 
-                    # hubungkan sinyal
-                    self.camera_instance.thread.frame_received.connect(
-                        self.frame_processor.process, Qt.QueuedConnection
-                    )
-                    self.frame_processor.processed.connect(
-                        self._update_ui_with_metrics, Qt.QueuedConnection
-                    )
+                    if self.camera_instance.thread:
+                        self.camera_instance.thread.frame_received.connect(
+                            self.frame_processor.process, Qt.QueuedConnection
+                        )
+                        self.frame_processor.processed.connect(
+                            self.on_processed_frame, Qt.QueuedConnection
+                        )
                     self.worker_thread.start()
+
+            _attempt_connect()
         except Exception as e:
+            logger.error(f"Error initializing camera: {e}")
             self.video_display.set_offline_message()
             QMessageBox.warning(
                 self,
                 "Camera Connection Error",
                 f"Error initializing camera: {str(e)}"
             )
+            # if self.camera_instance:
+            #     cleanup_camera(self.camera_instance)
     
     def edit_roi(self):
         """Open ROI selector dialog and update camera ROI points"""
@@ -771,7 +783,7 @@ class CameraDetailUI(QMainWindow):
                 pass
         if self.camera_instance:
             self.camera_instance.set_preview_mode(True)
-            self.camera_instance.disconnect()
+            cleanup_camera(self.camera_instance)
 
         if self.ui_update_timer.isActive():
             self.ui_update_timer.stop()

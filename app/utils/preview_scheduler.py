@@ -33,6 +33,7 @@ class SnapshotWorker(QRunnable):
         cap.set(cv.CAP_PROP_FRAME_WIDTH, 160)
         cap.set(cv.CAP_PROP_FRAME_HEIGHT, 90)
         cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
+        cap = cv.VideoCapture(rtsp_url, cv.CAP_FFMPEG)
         ret, frame = cap.read()
         cap.release()
 

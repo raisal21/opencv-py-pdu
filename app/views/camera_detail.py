@@ -625,42 +625,45 @@ class CameraDetailUI(QMainWindow):
             self.video_display.set_connecting_message()
 
             def _attempt_connect(retry_left=3):
-                if self.camera_instance.connect():
-                    self.camera_instance.start_stream()
-                    self.camera.set_preview_mode(False)
-                    cam_thread = self.camera_instance.thread
-                    if not self.worker_thread:                       # agar tak duplikat
-                        self.worker_thread = QThread(self)
+                """
+                Gunakan thread yang SUDAH berjalan pada self.camera_instance.
+                Tak perlu panggil start_stream dua kali agar VideoCapture
+                tidak dibuat ganda (menghindari seg-fault FFmpeg).
+                """
+                # pastikan terhubung sekali saja
+                if not self.camera_instance.connection_status:
+                    if not self.camera_instance.connect():
+                        if retry_left > 0:
+                            QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
+                        else:
+                            self.video_display.set_error_message("Gagal konek kamera.")
+                        return
 
-                        bg_params       = BG_PRESETS["default"]
-                        contour_params  = CONTOUR_PRESETS["standard"]
+                # naikkan FPS ke mode detail (15 fps)
+                self.camera_instance.set_preview_mode(False)
 
-                        self.frame_processor = FrameProcessor(
-                            self.camera_instance,
-                            bg_params,
-                            contour_params
-                        )
-                        self.frame_processor.moveToThread(self.worker_thread)
+                # --- pasang processor & sinyal hanya sekali ---
+                if not self.worker_thread:
+                    self.worker_thread = QThread(self)
 
-                        cam_thread.frame_received.connect(
-                            self.frame_processor.process, Qt.QueuedConnection
-                        )
-                        self.frame_processor.processed.connect(
-                            self.on_processed_frame, Qt.QueuedConnection
-                        )
-                        self.worker_thread.start()
-                    cam_thread.error_occurred.connect(self.handle_camera_error)
-                    cam_thread.connection_changed.connect(self.handle_connection_change)
-                elif retry_left > 0:
-                    QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
-                else:
-                    self.video_display.set_offline_message()
-                    QMessageBox.warning(
-                        self, "Camera Connection Error",
-                        f"Failed to connect to camera: {self.camera_instance.last_error}"
+                    bg_params      = BG_PRESETS["default"]
+                    contour_params = CONTOUR_PRESETS["standard"]
+
+                    self.frame_processor = FrameProcessor(
+                        self.camera_instance,
+                        bg_params,
+                        contour_params
                     )
-            # panggil pertama kali 100 ms setelah UI siap
-            QTimer.singleShot(100, _attempt_connect)
+                    self.frame_processor.moveToThread(self.worker_thread)
+
+                    # hubungkan sinyal
+                    self.camera_instance.thread.frame_received.connect(
+                        self.frame_processor.process, Qt.QueuedConnection
+                    )
+                    self.frame_processor.processed.connect(
+                        self._update_ui_with_metrics, Qt.QueuedConnection
+                    )
+                    self.worker_thread.start()
         except Exception as e:
             self.video_display.set_offline_message()
             QMessageBox.warning(
@@ -774,10 +777,15 @@ class CameraDetailUI(QMainWindow):
             self.ui_update_timer.stop()
 
         try:
-            self.coverage_logger.flush()
-            self.coverage_logger.stop()
+            def _stop_logger():
+                try:
+                    self.coverage_logger.stop()
+                except Exception as e:
+                    logger.warning(f"[CoverageLogger] gagal shutdown: {e}")
+
+            self.coverage_logger.flush_async(_stop_logger)
         except Exception as e:
-            logger.warning(f"[CoverageLogger] gagal shutdown: {e}")
+            logger.warning(f"[CoverageLogger] exception saat flush_async: {e}")
         
         parent = self.parent()
         if parent is not None:

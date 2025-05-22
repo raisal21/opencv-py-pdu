@@ -3,7 +3,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
 import numpy as np
 
 from utils.material_detector import ForegroundExtraction, ContourProcessor
-from models.camera import Camera   # hanya tipe; tidak mem‑pull Qt apa pun
+from models.camera import Camera
 
 
 class FrameProcessor(QObject):

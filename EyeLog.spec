@@ -25,7 +25,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    icon= 'assets/icons/eyelog.ico'
+    icon= 'assets/icons/eyelog.ico',
     name='EyeLog',
     debug=False,
     bootloader_ignore_signals=False,

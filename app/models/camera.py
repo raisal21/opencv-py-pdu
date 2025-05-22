@@ -87,7 +87,7 @@ class Camera:
             stream_path = stream_path[1:]
         
         # Bangun URL RTSP: rtsp://[username:password@]ip:port/stream
-        return f"rtsp://{auth_part}{self.ip_address}:{self.port}/{stream_path}"
+        return f"rtsp://{auth_part}{self.ip_address}:{self.port}/{stream_path}?tcp"
     
     def connect(self):
         """
@@ -348,8 +348,6 @@ class Camera:
         self.thread.set_target_fps(new_fps)
 
 
-
-
 class CameraThread(QThread):
     """
     Thread terpisah untuk menangani streaming video dari kamera.
@@ -390,6 +388,9 @@ class CameraThread(QThread):
         """
         self.running = True
         consecutive_errors = 0
+
+        frame_counter = 0
+        start_time    = time.time()
         
         while self.running:
             try:
@@ -487,6 +488,13 @@ def convert_cv_to_pixmap(cv_frame, target_size=None):
         )
     
     return pixmap
+
+def convert_cv_to_qimage(cv_frame) -> QImage:
+    """BGR numpy → QImage.Format_RGB888"""
+    h, w, ch = cv_frame.shape
+    bytes_per_line = ch * w
+    cv_rgb = cv.cvtColor(cv_frame, cv.COLOR_BGR2RGB)
+    return QImage(cv_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
 
 
 # Contoh penggunaan dasar:

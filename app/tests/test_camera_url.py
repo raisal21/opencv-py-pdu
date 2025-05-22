@@ -5,7 +5,11 @@ Menjaga pemisahan konteks antara database CRUD dan helper URL.
     pytest -q tests/test_camera_url.py
 """
 
-from camera import Camera
+import sys
+import os
+from models.camera import Camera
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ---------------------------------------------------------------------------
 # URL Builder tests

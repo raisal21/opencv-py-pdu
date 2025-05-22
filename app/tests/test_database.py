@@ -13,12 +13,15 @@ Jalankan dengan:
     pytest -q tests/test_database.py
 """
 
+import sys
 import os
 import sqlite3
 import pytest
 
 # Import modul yang diuji
-from database import DatabaseManager
+from models.database import DatabaseManager
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ---------------------------------------------------------------------------
 # FIXTURES

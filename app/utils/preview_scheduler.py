@@ -3,15 +3,15 @@ import logging
 import cv2 as cv
 
 from PySide6.QtCore import QRunnable, Signal, QObject, QMetaObject, Qt
-from PySide6.QtGui  import QImage, QPixmap
+from PySide6.QtGui  import QImage
 from PySide6.QtCore import QSize
-from models.camera import Camera, convert_cv_to_pixmap
+from models.camera import Camera, convert_cv_to_qimage
 
 logger = logging.getLogger(__name__) 
 
 class SnapshotSignal(QObject):
     """Pembungkus sinyal untuk dikirim balik ke GUI‑thread"""
-    finished = Signal(int, QPixmap)
+    finished = Signal(int, QImage)
 
 class SnapshotWorker(QRunnable):
     """
@@ -32,9 +32,10 @@ class SnapshotWorker(QRunnable):
         cap = cv.VideoCapture(rtsp_url, cv.CAP_FFMPEG)
         cap.set(cv.CAP_PROP_FRAME_WIDTH, 160)
         cap.set(cv.CAP_PROP_FRAME_HEIGHT, 90)
+        cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
         ret, frame = cap.read()
         cap.release()
 
         if ret and frame is not None:
-            pixmap = convert_cv_to_pixmap(frame, QSize(160, 90))
-            self.signals.finished.emit(self.camera_id, pixmap)
+            qimg = convert_cv_to_qimage(frame)
+            self.signals.finished.emit(self.camera_id, qimg)

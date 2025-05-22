@@ -394,7 +394,7 @@ class AddCameraDialog(QDialog):
             rtsp_url = camera_data['url']
             
             # Create VideoCapture
-            cap = cv.VideoCapture(rtsp_url)
+            cap = cv.VideoCapture(rtsp_url, cv.CAP_FFMPEG)
             
             # Set larger resolution for ROI selection
             cap.set(cv.CAP_PROP_FRAME_WIDTH, 1280)
@@ -431,10 +431,10 @@ class AddCameraDialog(QDialog):
                 # Get ROI data if user confirmed
                 self.roi_points, self.roi_image = roi_dialog.get_roi()
 
-                logger.debug("ROI Points obtained:", self.roi_points)
-                logger.debug("ROI Points type:", type(self.roi_points))
-                logger.debug("ROI Image shape:", self.roi_image.shape if self.roi_image is not None else None)
-                
+                logger.debug("ROI Points obtained: %s", self.roi_points)
+                logger.debug("ROI Points type: %s", type(self.roi_points))
+                logger.debug("ROI Image shape: %s", self.roi_image.shape if self.roi_image is not None else None)
+       
                 # Dialog was accepted and ROI was selected, complete the camera addition
                 self.accept()
             # If ROI dialog was rejected, stay on this dialog

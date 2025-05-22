@@ -10,10 +10,10 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QMessageBox, QDialog)
 from shiboken6 import isValid
 from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QThread, QThreadPool
-from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap
+from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap, QImage
 
 from resources import resource_path
-from models.camera import convert_cv_to_pixmap, CameraThread
+from models.camera import Camera, convert_cv_to_pixmap, CameraThread
 from models.database import DatabaseManager
 from views.add_camera import AddCameraDialog
 from utils.log import setup as setup_log
@@ -260,13 +260,19 @@ class CameraItem(QFrame):
         """Set gambar preview kamera"""
         if isinstance(image, QPixmap):
             pixmap = image
+        elif isinstance(image, QImage):
+            pixmap = QPixmap.fromImage(image)
         else:
-            # Konversi dari OpenCV image ke QPixmap
             pixmap = convert_cv_to_pixmap(image, QSize(160, 90))
-        
+
         if not pixmap.isNull():
+            # skala di sini agar konsisten
+            pixmap = pixmap.scaled(160, 90,
+                                Qt.KeepAspectRatio,
+                                Qt.SmoothTransformation)
             self.preview_widget.setPixmap(pixmap)
-            self.preview_widget.setStyleSheet("background-color: #1C1C1F; border-radius: 4px;")
+            self.preview_widget.setStyleSheet(
+                "background-color: #1C1C1F; border-radius: 4px;")
 
     def _update_preview_label(self, frame):
         """Slot: terima frame dari CameraThread & tampilkan di QLabel preview."""
@@ -306,7 +312,6 @@ class CameraItem(QFrame):
         self.delete_clicked.emit(self.camera_id)
 
     def closeEvent(self, event):
-
         super().closeEvent(event)
 
 
@@ -350,7 +355,7 @@ class CameraList(QWidget):
         self.ping_timer.start(20000)
 
         self.preview_pool = QThreadPool.globalInstance()
-        self.preview_pool.setMaxThreadCount(4)
+        self.preview_pool.setMaxThreadCount(QThread.idealThreadCount())
 
         self.preview_timer = QTimer(self)
         self.preview_timer.timeout.connect(self._refresh_previews)
@@ -469,8 +474,16 @@ class CameraList(QWidget):
             self._show_empty_state()
             return
 
-        if self.empty_label and self.empty_label.isVisible():
-            self.empty_label.setVisible(False)
+        # Cek dan hapus label kosong hanya kalau dia masih valid
+        if hasattr(self, 'empty_label') and self.empty_label:
+            try:
+                self.empty_label.setParent(None)
+                self.empty_label.deleteLater()
+                self.empty_label = None
+            except RuntimeError:
+                # QLabel sudah dihapus oleh Qt, abaikan
+                self.empty_label = None
+
 
         for camera_data in cameras:
             camera_item = CameraItem(
@@ -502,7 +515,6 @@ class CameraList(QWidget):
         mon = CoverageMonitor(cam, log_interval=300, notif_delay=300)
         mon.danger.connect(lambda cid, p: self.danger_received.emit(cid, p))
         cam._monitor = mon      # simpan referensi supaya bisa di-stop
-        mon.start() 
 
     def _show_empty_state(self):
         """
@@ -666,8 +678,9 @@ class CameraList(QWidget):
 
             worker = SnapshotWorker(self.active_cameras, widget.camera_id)
             worker.signals.finished.connect(
-                lambda cid, pixmap, ref=widget:
-                    ref.set_preview(pixmap) if ref.camera_id == cid else None
+                lambda cid, qimg, ref=widget:           # qimg = QImage
+                    ref.set_preview(QPixmap.fromImage(qimg).scaled(160, 90,
+                                    Qt.KeepAspectRatio, Qt.SmoothTransformation))
             )
             self.preview_pool.start(worker)
 

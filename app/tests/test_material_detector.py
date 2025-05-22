@@ -7,11 +7,15 @@ Menjalankan:
     pytest -q tests/test_material_detector.py
 """
 
+import sys
+import os
 import cv2 as cv
 import numpy as np
 import pytest
 
-from material_detector import ForegroundExtraction, ContourProcessor
+from utils.material_detector import ForegroundExtraction, ContourProcessor
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ---------------------------------------------------------------------------
 # Helper fixtures
@@ -21,6 +25,7 @@ from material_detector import ForegroundExtraction, ContourProcessor
 def black_frame():
     """100×100 utk baseline (semua hitam)."""
     return np.zeros((100, 100, 3), dtype=np.uint8)
+
 
 @pytest.fixture
 def half_white_frame():
@@ -34,12 +39,9 @@ def half_white_frame():
 # ---------------------------------------------------------------------------
 
 def test_foreground_blank_returns_zero(black_frame):
-    fg = ForegroundExtraction(history=5, var_threshold=16, detect_shadows=False,
-                              learning_rate=1.0)  # cepat konvergen
-    # proses beberapa frame agar model stabil
-    for _ in range(3):
+    fg = ForegroundExtraction(history=5, var_threshold=16, detect_shadows=False, learning_rate=0.01)
+    for _ in range(30):
         res = fg.process_frame(black_frame)
-    # Terakhir, mask seharusnya kosong (tidak ada foreground)
     assert cv.countNonZero(res.binary) == 0
 
 

@@ -4,11 +4,13 @@ Memastikan transform ROI bekerja & kasus tanpa ROI aman.
  Jalankan:
     pytest -q tests/test_camera_roi.py
 """
-
+import sys
+import os
 import numpy as np
 import pytest
 
-from camera import Camera
+from models.camera import Camera
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ---------------------------------------------------------------------------
 # FIXTURE – frame dummy 60×120 putih (BGR)

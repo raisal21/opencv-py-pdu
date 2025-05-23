@@ -6,6 +6,7 @@ import psutil
 import logging
 from PySide6.QtCore import Qt, QThread, Signal, QMutex, QMutexLocker, QSize
 from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import QApplication
 
 
 logger = logging.getLogger(__name__) 
@@ -15,6 +16,45 @@ FPS_DETAIL  = 15
 FPS_IDLE    = 3
 CPU_HIGH_THRESHOLD = 80
 
+def cleanup_camera(camera):
+    """
+    Helper untuk cleanup camera dengan aman.
+    Bisa dipanggil multiple kali tanpa error.
+    """
+    if not camera:
+        return
+        
+    try:
+        # Check if camera has disconnect method
+        if hasattr(camera, 'disconnect'):
+            logger.info(f"Cleaning up camera: {getattr(camera, 'name', 'Unknown')}")
+            
+            # Check if already disconnecting
+            if getattr(camera, '_is_disconnecting', False):
+                logger.debug("Camera already disconnecting, skipping")
+                return
+                
+            # Mark as disconnecting
+            camera._is_disconnecting = True
+            
+            # Call disconnect
+            camera.disconnect()
+            
+            # Process events to ensure cleanup
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app:
+                app.processEvents()
+            
+            # Small delay for safety
+            time.sleep(0.05)
+            
+    except Exception as e:
+        logger.error(f"Error during camera cleanup: {e}")
+    finally:
+        # Reset flag
+        if hasattr(camera, '_is_disconnecting'):
+            camera._is_disconnecting = False
 
 class Camera:
     """
@@ -573,9 +613,14 @@ def convert_cv_to_pixmap(cv_frame, target_size=None):
     if cv_frame is None:
         return QPixmap()
 
-    if QThread.currentThread() != QApplication.instance().thread():
-        logger.error("convert_cv_to_pixmap() dipanggil dari worker thread! Ini berbahaya!")
-        return QPixmap()
+    try:
+        app = QApplication.instance()
+        if app and QThread.currentThread() != app.thread():
+            logger.error("convert_cv_to_pixmap() dipanggil dari worker thread!")
+            return QPixmap()
+    except:
+        # Jika ada error, lanjut saja (lebih baik daripada crash)
+        pass
     
     # Konversi BGR ke RGB
     rgb_frame = cv.cvtColor(cv_frame, cv.COLOR_BGR2RGB)

@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QThread, QThreadP
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap, QImage
 
 from resources import resource_path
-from models.camera import Camera, convert_cv_to_pixmap, CameraThread
+from models.camera import Camera, convert_cv_to_pixmap, CameraThread, cleanup_camera
 from models.database import DatabaseManager
 from views.add_camera import AddCameraDialog
 from utils.log import setup as setup_log
@@ -26,43 +26,6 @@ from views.notification_dialog import NotificationDialog
 
 
 setup_log("--debug" in sys.argv)  
-
-def cleanup_camera(camera):
-    """
-    Helper untuk cleanup camera dengan aman.
-    Bisa dipanggil multiple kali tanpa error.
-    """
-    if not camera:
-        return
-        
-    try:
-        # Check if camera has disconnect method
-        if hasattr(camera, 'disconnect'):
-            logger.info(f"Cleaning up camera: {getattr(camera, 'name', 'Unknown')}")
-            
-            # Check if already disconnecting
-            if getattr(camera, '_is_disconnecting', False):
-                logger.debug("Camera already disconnecting, skipping")
-                return
-                
-            # Mark as disconnecting
-            camera._is_disconnecting = True
-            
-            # Call disconnect
-            camera.disconnect()
-            
-            # Process events to ensure cleanup
-            QApplication.processEvents()
-            
-            # Small delay for safety
-            time.sleep(0.05)
-            
-    except Exception as e:
-        logger.error(f"Error during camera cleanup: {e}")
-    finally:
-        # Reset flag
-        if hasattr(camera, '_is_disconnecting'):
-            camera._is_disconnecting = False
 
 
 class DeleteCameraDialog(QDialog):
@@ -1021,7 +984,6 @@ class MainWindow(QMainWindow):
                 f"Camera with ID {camera_id} not found."
             )
     def closeEvent(self, event):
-        logger.info("MainWindow closing, cleaning up resources...")
     
         # Stop semua monitors
         for cam in self.camera_list.active_cameras.values():

@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QThread, QSize, QRect, QTimer, QPropertyAnimation
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QLinearGradient, QCursor, QIcon, QDesktopServices
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 from resources import resource_path
-from models.camera import Camera, convert_cv_to_pixmap
+from models.camera import Camera, convert_cv_to_pixmap, cleanup_camera
 
 # Import material detector classes
 from utils.material_detector import (
@@ -777,9 +777,15 @@ class CameraDetailUI(QMainWindow):
             # lepaskan sinyal agar jendela baru tidak menerima pesan error lama
             try:
                 th.frame_received.disconnect()
+            except (TypeError, RuntimeError):
+                pass  # Sudah disconnect atau tidak ada connection
+            try:
                 th.error_occurred.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            try:
                 th.connection_changed.disconnect()
-            except TypeError:
+            except (TypeError, RuntimeError):
                 pass
         if self.camera_instance:
             self.camera_instance.set_preview_mode(True)
@@ -798,6 +804,13 @@ class CameraDetailUI(QMainWindow):
             self.coverage_logger.flush_async(_stop_logger)
         except Exception as e:
             logger.warning(f"[CoverageLogger] exception saat flush_async: {e}")
+        
+        try:
+            if self.camera_instance:
+                self.camera_instance.set_preview_mode(True)
+                cleanup_camera(self.camera_instance)
+        except Exception as e:
+            logger.error(f"Error during camera cleanup: {e}")
         
         parent = self.parent()
         if parent is not None:

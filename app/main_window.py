@@ -20,9 +20,6 @@ from utils.log import setup as setup_log
 from utils.db_worker import DBWorker
 from utils.ping_scheduler import PingWorker
 from utils.preview_scheduler import SnapshotWorker
-from utils.coverage_monitor import CoverageMonitor
-from utils.notification_center import NotificationCenter
-from views.notification_dialog import NotificationDialog
 
 
 setup_log("--debug" in sys.argv)  
@@ -344,14 +341,11 @@ class CameraList(QWidget):
         # Dictionary untuk menyimpan instance kamera aktif
         self.active_cameras = {}
         camera_list = self.db_manager.get_all_cameras()
-        self.monitors = {}
 
         for camera_data in camera_list:
             cam_id = camera_data['id']
             if cam_id in self.active_cameras:
                 try:
-                    monitor = CoverageMonitor(self.active_cameras[cam_id])
-                    self.monitors[cam_id] = monitor
                     self.active_cameras[camera_data['id']]._monitor = monitor
 
                 except Exception as e:
@@ -517,16 +511,6 @@ class CameraList(QWidget):
 
             # simpan objek Camera supaya PreviewWorker bisa pakai
             self.active_cameras[camera_data['id']] = Camera.from_dict(camera_data)
-            self._start_monitor(self.active_cameras[camera_data['id']])
-    
-    def _start_monitor(self, cam):
-        """
-        Menyalakan CoverageMonitor di background.
-        - Save CSV tiap 5 menit  - Throttle notifikasi 5 menit
-        """
-        mon = CoverageMonitor(cam, log_interval=300, notif_delay=300)
-        mon.danger.connect(lambda cid, p: self.danger_received.emit(cid, p))
-        cam._monitor = mon      # simpan referensi supaya bisa di-stop
 
     def _show_empty_state(self):
         """
@@ -588,7 +572,6 @@ class CameraList(QWidget):
             'protocol': protocol, 'username': username, 'password': password,
             'stream_path': stream_path, 'url': url, 'roi_points': roi_points
         })
-        self._start_monitor(self.active_cameras[camera_id])
     
     def edit_camera(self, camera_id):
         camera_data = self.db_manager.get_camera(camera_id)
@@ -741,9 +724,6 @@ class MainWindow(QMainWindow):
         
         # Setup UI
         self.setup_ui()
-        self.notif_center = NotificationCenter(self)
-        self.notif_center.new_notification.connect(self._highlight_notif_icon)
-        self.camera_list.danger_received.connect(self._on_coverage_danger)
         
         # Setup timer untuk jam
         self.update_clock()
@@ -822,7 +802,6 @@ class MainWindow(QMainWindow):
             }
         """)
         notification_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        notification_button.clicked.connect(self.show_notification_dialog)
         self.notification_button = notification_button
 
         # Add widgets to header
@@ -897,13 +876,6 @@ class MainWindow(QMainWindow):
         current_time = datetime.now().strftime("%H:%M:%S %d-%m-%Y")
         self.clock_text_label.setText(current_time)
     
-    def show_notification_dialog(self):
-        dlg = NotificationDialog(self.notif_center.all(), self)
-        dlg.exec()
-        # setelah dialog ditutup, reset highlight
-        self.notification_button.setIcon(
-            QIcon(resource_path("assets/icons/bell.png"))
-        )
 
     def update_status_bar(self):
         """Update status bar dengan jumlah kamera terhubung"""
@@ -946,11 +918,6 @@ class MainWindow(QMainWindow):
                     "Add Failed",
                     "Failed to add camera. Please try again."
                 )
-
-    def _on_coverage_danger(self, cam_id: int, percent: float):
-        cam = self.camera_list.active_cameras.get(cam_id)
-        name = cam.name if cam else f"Camera {cam_id}"
-        self.notif_center.add(cam_id, f"Coverage {percent:.1f}% (danger)", name)
     
     def _highlight_notif_icon(self, _data):
         self.notification_button.setIcon(
@@ -971,7 +938,6 @@ class MainWindow(QMainWindow):
                 mon = getattr(cam, "_monitor", None)
                 if mon:
                     mon.stop()
-            cam._monitor = None 
             self.hide()
             self._detail_window = camera_detail
 

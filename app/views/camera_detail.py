@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QThread, QSize, QRect, QTimer, QPropertyAnimation
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QLinearGradient, QCursor, QIcon, QDesktopServices
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 from resources import resource_path
-from models.camera import Camera, convert_cv_to_pixmap, cleanup_camera
+from models.camera import Camera, convert_cv_to_pixmap
 
 # Import material detector classes
 from utils.material_detector import (
@@ -625,64 +625,46 @@ class CameraDetailUI(QMainWindow):
             self.video_display.set_connecting_message()
 
             def _attempt_connect(retry_left=3):
-                """
-                Gunakan thread yang SUDAH berjalan pada self.camera_instance.
-                Tak perlu panggil start_stream dua kali agar VideoCapture
-                tidak dibuat ganda (menghindari seg-fault FFmpeg).
-                """
-                if not self.camera_instance:
-                    self.video_display.set_error_message("Camera instance lost")
-                    return
-
-                # pastikan terhubung sekali saja
-                if not self.camera_instance.connection_status:
-                    if not self.camera_instance.connect():
-                        if retry_left > 0:
-                            QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
-                        else:
-                            self.video_display.set_error_message("Gagal konek kamera.")
-                        return
-
-                if not self.camera_instance.thread or not self.camera_instance.thread.isRunning():
+                if self.camera_instance.connect():
                     self.camera_instance.start_stream()
+                    # FIXED: Gunakan camera_instance konsisten
+                    self.camera_instance.set_preview_mode(False)
+                    cam_thread = self.camera_instance.thread
+                    
+                    if not self.worker_thread:  # agar tak duplikat
+                        self.worker_thread = QThread(self)
 
-                # naikkan FPS ke mode detail (15 fps)
-                self.camera_instance.set_preview_mode(False)
+                        bg_params = BG_PRESETS["default"]
+                        contour_params = CONTOUR_PRESETS["standard"]
 
-                # --- pasang processor & sinyal hanya sekali ---
-                if not self.worker_thread:
-                    self.worker_thread = QThread(self)
+                        self.frame_processor = FrameProcessor(
+                            self.camera_instance,  # FIXED: konsisten menggunakan camera_instance
+                            bg_params,
+                            contour_params
+                        )
+                        self.frame_processor.moveToThread(self.worker_thread)
 
-                    bg_params      = BG_PRESETS["default"]
-                    contour_params = CONTOUR_PRESETS["standard"]
-
-                    self.frame_processor = FrameProcessor(
-                        self.camera_instance,
-                        bg_params,
-                        contour_params
-                    )
-                    self.frame_processor.moveToThread(self.worker_thread)
-
-                    if self.camera_instance.thread:
-                        self.camera_instance.thread.frame_received.connect(
+                        cam_thread.frame_received.connect(
                             self.frame_processor.process, Qt.QueuedConnection
                         )
                         self.frame_processor.processed.connect(
                             self.on_processed_frame, Qt.QueuedConnection
                         )
-                    self.worker_thread.start()
-
-            _attempt_connect()
-        except Exception as e:
-            logger.error(f"Error initializing camera: {e}")
-            self.video_display.set_offline_message()
-            QMessageBox.warning(
-                self,
-                "Camera Connection Error",
-                f"Error initializing camera: {str(e)}"
-            )
-            # if self.camera_instance:
-            #     cleanup_camera(self.camera_instance)
+                        self.worker_thread.start()
+                        
+                    cam_thread.error_occurred.connect(self.handle_camera_error)
+                    cam_thread.connection_changed.connect(self.handle_connection_change)
+                elif retry_left > 0:
+                    QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
+                else:
+                    self.video_display.set_offline_message()
+                    QMessageBox.warning(
+                        self, "Camera Connection Error",
+                        f"Failed to connect to camera: {self.camera_instance.last_error}"
+                    )
+            
+            # panggil pertama kali 100 ms setelah UI siap
+            QTimer.singleShot(100, _attempt_connect)
     
     def edit_roi(self):
         """Open ROI selector dialog and update camera ROI points"""
@@ -762,69 +744,67 @@ class CameraDetailUI(QMainWindow):
         else:
             self.video_display.set_offline_message()
     
-    def closeEvent(self, event):
+def closeEvent(self, event):
+    """Improved cleanup dengan threading safety"""
+    try:
+        # Stop timer terlebih dahulu
+        if hasattr(self, 'ui_update_timer') and self.ui_update_timer.isActive():
+            self.ui_update_timer.stop()
+
+        # Cleanup worker thread dengan aman
         if getattr(self, "worker_thread", None) and self.worker_thread.isRunning():
             self.worker_thread.quit()
-            self.worker_thread.wait()
+            self.worker_thread.wait(3000)  # Wait maksimal 3 detik
             self.worker_thread = None
+        
+        # Cleanup frame processor
         if getattr(self, "frame_processor", None):
             try:
                 self.frame_processor.deleteLater()
             except RuntimeError:
-                pass
+                pass  # C++ object sudah dihapus
+            self.frame_processor = None
+
+        # FIXED: Konsisten menggunakan camera_instance
         if self.camera_instance and self.camera_instance.thread:
             th = self.camera_instance.thread
-            # lepaskan sinyal agar jendela baru tidak menerima pesan error lama
+            # Disconnect signals untuk mencegah callback ke object yang sudah dihapus
             try:
                 th.frame_received.disconnect()
-            except (TypeError, RuntimeError):
-                pass  # Sudah disconnect atau tidak ada connection
-            try:
                 th.error_occurred.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            try:
                 th.connection_changed.disconnect()
-            except (TypeError, RuntimeError):
-                pass
+            except TypeError:
+                pass  # Signal sudah disconnect
+
+            # Stop thread dengan proper cleanup
+            if th.isRunning():
+                th.stop()
+                th.wait(2000)  # Wait maksimal 2 detik
+
+        # Cleanup camera instance
         if self.camera_instance:
             self.camera_instance.set_preview_mode(True)
-            cleanup_camera(self.camera_instance)
+            self.camera_instance.disconnect()
+            self.camera_instance = None
 
-        if self.ui_update_timer.isActive():
-            self.ui_update_timer.stop()
-
+        # Cleanup coverage logger
         try:
-            def _stop_logger():
-                try:
-                    self.coverage_logger.stop()
-                except Exception as e:
-                    logger.warning(f"[CoverageLogger] gagal shutdown: {e}")
-
-            self.coverage_logger.flush_async(_stop_logger)
+            if hasattr(self, 'coverage_logger'):
+                self.coverage_logger.flush()
+                self.coverage_logger.stop()
         except Exception as e:
-            logger.warning(f"[CoverageLogger] exception saat flush_async: {e}")
+            print(f"[CoverageLogger] gagal shutdown: {e}")
         
-        try:
-            if self.camera_instance:
-                self.camera_instance.set_preview_mode(True)
-                cleanup_camera(self.camera_instance)
-        except Exception as e:
-            logger.error(f"Error during camera cleanup: {e}")
-        
+        # Show parent window
         parent = self.parent()
         if parent is not None:
-            # －－ Tambah blok ini persis sebelum parent.show() －－
-            if hasattr(parent, "camera_list"):
-                cam = parent.camera_list.active_cameras.get(self.camera_data["id"])
-                if cam and not getattr(cam, "_monitor", None):
-                    parent.camera_list._start_monitor(cam)
-
             parent.show()
             if hasattr(parent, "_detail_window"):
                 parent._detail_window = None
 
-        self.coverage_logger.flush_async(lambda: self.coverage_logger.stop())
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+    finally:
         super().closeEvent(event)
 
 

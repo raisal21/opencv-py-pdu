@@ -627,16 +627,18 @@ class CameraDetailUI(QMainWindow):
             def _attempt_connect(retry_left=3):
                 if self.camera_instance.connect():
                     self.camera_instance.start_stream()
-                    self.camera.set_preview_mode(False)
+                    # FIXED: Gunakan camera_instance konsisten
+                    self.camera_instance.set_preview_mode(False)
                     cam_thread = self.camera_instance.thread
-                    if not self.worker_thread:                       # agar tak duplikat
+                    
+                    if not self.worker_thread:  # agar tak duplikat
                         self.worker_thread = QThread(self)
 
-                        bg_params       = BG_PRESETS["default"]
-                        contour_params  = CONTOUR_PRESETS["standard"]
+                        bg_params = BG_PRESETS["default"]
+                        contour_params = CONTOUR_PRESETS["standard"]
 
                         self.frame_processor = FrameProcessor(
-                            self.camera_instance,
+                            self.camera_instance,  # FIXED: konsisten menggunakan camera_instance
                             bg_params,
                             contour_params
                         )
@@ -649,6 +651,7 @@ class CameraDetailUI(QMainWindow):
                             self.on_processed_frame, Qt.QueuedConnection
                         )
                         self.worker_thread.start()
+                        
                     cam_thread.error_occurred.connect(self.handle_camera_error)
                     cam_thread.connection_changed.connect(self.handle_connection_change)
                 elif retry_left > 0:
@@ -659,15 +662,9 @@ class CameraDetailUI(QMainWindow):
                         self, "Camera Connection Error",
                         f"Failed to connect to camera: {self.camera_instance.last_error}"
                     )
-            # panggil pertama kali 100 ms setelah UI siap
+            
+            # panggil pertama kali 100 ms setelah UI siap
             QTimer.singleShot(100, _attempt_connect)
-        except Exception as e:
-            self.video_display.set_offline_message()
-            QMessageBox.warning(
-                self,
-                "Camera Connection Error",
-                f"Error initializing camera: {str(e)}"
-            )
     
     def edit_roi(self):
         """Open ROI selector dialog and update camera ROI points"""
@@ -748,45 +745,67 @@ class CameraDetailUI(QMainWindow):
             self.video_display.set_offline_message()
     
     def closeEvent(self, event):
-        if getattr(self, "worker_thread", None) and self.worker_thread.isRunning():
-            self.worker_thread.quit()
-            self.worker_thread.wait()
-            self.worker_thread = None
-        if getattr(self, "frame_processor", None):
-            try:
-                self.frame_processor.deleteLater()
-            except RuntimeError:
-                pass
-        if self.camera_instance and self.camera_instance.thread:
-            th = self.camera_instance.thread
-            # lepaskan sinyal agar jendela baru tidak menerima pesan error lama
-            try:
-                th.frame_received.disconnect()
-                th.error_occurred.disconnect()
-                th.connection_changed.disconnect()
-            except TypeError:
-                pass
-        if self.camera_instance:
-            self.camera_instance.set_preview_mode(True)
-            self.camera_instance.disconnect()
-
-        if self.ui_update_timer.isActive():
-            self.ui_update_timer.stop()
-
+        """Improved cleanup dengan threading safety"""
         try:
-            self.coverage_logger.flush()
-            self.coverage_logger.stop()
-        except Exception as e:
-            logger.warning(f"[CoverageLogger] gagal shutdown: {e}")
-        
-        parent = self.parent()
-        if parent is not None:
-            parent.show()
-            if hasattr(parent, "_detail_window"):
-                parent._detail_window = None
+            # Stop timer terlebih dahulu
+            if hasattr(self, 'ui_update_timer') and self.ui_update_timer.isActive():
+                self.ui_update_timer.stop()
 
-        self.coverage_logger.flush_async(lambda: self.coverage_logger.stop())
-        super().closeEvent(event)
+            # Cleanup worker thread dengan aman
+            if getattr(self, "worker_thread", None) and self.worker_thread.isRunning():
+                self.worker_thread.quit()
+                self.worker_thread.wait(3000)  # Wait maksimal 3 detik
+                self.worker_thread = None
+            
+            # Cleanup frame processor
+            if getattr(self, "frame_processor", None):
+                try:
+                    self.frame_processor.deleteLater()
+                except RuntimeError:
+                    pass  # C++ object sudah dihapus
+                self.frame_processor = None
+
+            # FIXED: Konsisten menggunakan camera_instance
+            if self.camera_instance and self.camera_instance.thread:
+                th = self.camera_instance.thread
+                # Disconnect signals untuk mencegah callback ke object yang sudah dihapus
+                try:
+                    th.frame_received.disconnect()
+                    th.error_occurred.disconnect()
+                    th.connection_changed.disconnect()
+                except TypeError:
+                    pass  # Signal sudah disconnect
+
+                # Stop thread dengan proper cleanup
+                if th.isRunning():
+                    th.stop()
+                    th.wait(2000)  # Wait maksimal 2 detik
+
+            # Cleanup camera instance
+            if self.camera_instance:
+                self.camera_instance.set_preview_mode(True)
+                self.camera_instance.disconnect()
+                self.camera_instance = None
+
+            # Cleanup coverage logger
+            try:
+                if hasattr(self, 'coverage_logger'):
+                    self.coverage_logger.flush()
+                    self.coverage_logger.stop()
+            except Exception as e:
+                print(f"[CoverageLogger] gagal shutdown: {e}")
+            
+            # Show parent window
+            parent = self.parent()
+            if parent is not None:
+                parent.show()
+                if hasattr(parent, "_detail_window"):
+                    parent._detail_window = None
+
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+        finally:
+            super().closeEvent(event)
 
 
 # Run the application

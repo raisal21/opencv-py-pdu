@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QThread, QThreadP
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap
 
 from resources import resource_path
-from models.camera import convert_cv_to_pixmap, CameraThread
+from models.camera import Camera, convert_cv_to_pixmap, CameraThread
 from models.database import DatabaseManager
 from views.add_camera import AddCameraDialog
 from utils.log import setup as setup_log
@@ -443,8 +443,8 @@ class CameraList(QWidget):
             self._show_empty_state()
             return
 
-        if self.empty_label and self.empty_label.isVisible():
-            self.empty_label.setVisible(False)
+        # Hide empty label jika ada dan valid
+        self._hide_empty_label()
 
         for camera_data in cameras:
             camera_item = CameraItem(
@@ -464,8 +464,19 @@ class CameraList(QWidget):
             camera_item.delete_clicked.connect(self.delete_camera)
             self.cameras_layout.addWidget(camera_item)
 
-            # simpan objek Camera supaya PreviewWorker bisa pakai
+            # FIXED: Sekarang Camera class sudah diimport
             self.active_cameras[camera_data['id']] = Camera.from_dict(camera_data)
+
+    def _hide_empty_label(self):
+        """Helper method untuk menyembunyikan empty label dengan safe"""
+        try:
+            if (hasattr(self, "empty_label") and 
+                self.empty_label is not None and 
+                isValid(self.empty_label)):
+                self.empty_label.setVisible(False)
+        except RuntimeError:
+            # C++ object sudah dihapus, tidak apa-apa
+            pass
     
     def _show_empty_state(self):
         """

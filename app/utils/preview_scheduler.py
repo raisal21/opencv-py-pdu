@@ -1,3 +1,6 @@
+# app/utils/preview_scheduler.py
+# COMPLETE FIXED VERSION
+
 import logging
 import cv2 as cv
 import numpy as np
@@ -19,7 +22,8 @@ class VideoCapturePool:
         self.mutex = QMutex()
         self.last_used = {}
     
-    def get_capture(self, url):
+    def get_capture(self, url, *args, **kwargs):
+        # Ignore extra arguments for backward compatibility
         with QMutexLocker(self.mutex):
             # Check if exists in pool
             if url in self.pool:
@@ -141,6 +145,7 @@ class SnapshotWorker(QRunnable):
         except Exception as e:
             logger.error(f"Snapshot error for camera {self.camera_id}: {str(e)}")
             self.signals.error.emit(self.camera_id, str(e))
+
 
 class PreviewScheduler(QObject):
     """

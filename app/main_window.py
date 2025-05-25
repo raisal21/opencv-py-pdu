@@ -489,7 +489,6 @@ class CameraList(QWidget):
         self.preview_scheduler.request_snapshot(
             camera_id,
             callback=self._on_snapshot_received,
-            error_callback=self._on_snapshot_error
         )
 
     def _hide_empty_label(self):
@@ -680,10 +679,6 @@ class CameraList(QWidget):
                     # Update status menjadi online karena snapshot berhasil
                     widget.update_status(True)
                 break
-    
-    def _on_snapshot_error(self, camera_id: int, error_msg: str):
-        """Handle snapshot errors"""
-        logger.debug(f"Snapshot error for camera {camera_id}: {error_msg}")
 
     def _refresh_statuses(self):
         """Periodic ping untuk update status online/offline"""

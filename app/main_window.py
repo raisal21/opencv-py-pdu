@@ -3,6 +3,7 @@ import os
 import json
 import time
 from typing import Any
+import numpy as np
 import cv2 as cv
 from datetime import datetime
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -19,7 +20,7 @@ from views.add_camera import AddCameraDialog
 from utils.log import setup as setup_log
 from utils.db_worker import DBWorker
 from utils.ping_scheduler import PingWorker
-from utils.preview_scheduler import SnapshotWorker
+from utils.preview_scheduler import SnapshotWorker, PreviewScheduler
 
 setup_log("--debug" in sys.argv)  
 
@@ -253,12 +254,19 @@ class CameraItem(QFrame):
         self._status_worker: CameraStatusWorker | None = None
     
     def set_preview(self, image):
-        """Set gambar preview kamera"""
+        """
+        Set gambar preview kamera.
+        
+        Args:
+            image: QPixmap, atau numpy array (BGR format)
+        """
         if isinstance(image, QPixmap):
             pixmap = image
-        else:
-            # Konversi dari OpenCV image ke QPixmap
+        elif isinstance(image, np.ndarray):
+            # AMAN: Konversi di GUI thread
             pixmap = convert_cv_to_pixmap(image, QSize(160, 90))
+        else:
+            return
         
         if not pixmap.isNull():
             self.preview_widget.setPixmap(pixmap)
@@ -317,11 +325,12 @@ class CameraList(QWidget):
         
         # Database manager
         self.db_manager = db_manager
-        self.db_pool    = QThreadPool.globalInstance()
+        self.db_pool = QThreadPool.globalInstance()
         self.db_pool.setMaxThreadCount(2)
         
         # Dictionary untuk menyimpan instance kamera aktif
         self.active_cameras = {}
+        self.snapshot_done = set()
 
         self.ping_pool   = QThreadPool.globalInstance()
         self.ping_pool.setMaxThreadCount(4)
@@ -331,10 +340,7 @@ class CameraList(QWidget):
 
         self.preview_pool = QThreadPool.globalInstance()
         self.preview_pool.setMaxThreadCount(4)
-
-        self.preview_timer = QTimer(self)
-        self.preview_timer.timeout.connect(self._refresh_previews)
-        self.preview_timer.start(15000)
+        self.preview_scheduler = PreviewScheduler(self.active_cameras)
         
         # Layout utama
         self.main_layout = QVBoxLayout(self)
@@ -439,11 +445,11 @@ class CameraList(QWidget):
         self.db_pool.start(worker)  
 
     def _populate_camera_list(self, cameras):
+        """Populate camera list dan trigger initial snapshots"""
         if not cameras:
             self._show_empty_state()
             return
 
-        # Hide empty label jika ada dan valid
         self._hide_empty_label()
 
         for camera_data in cameras:
@@ -464,8 +470,26 @@ class CameraList(QWidget):
             camera_item.delete_clicked.connect(self.delete_camera)
             self.cameras_layout.addWidget(camera_item)
 
-            # FIXED: Sekarang Camera class sudah diimport
+            # Store camera instance
             self.active_cameras[camera_data['id']] = Camera.from_dict(camera_data)
+            
+            # Request ONE-TIME snapshot untuk camera ini
+            self._request_initial_snapshot(camera_data['id'])
+    
+    def _request_initial_snapshot(self, camera_id: int):
+        """Request snapshot SEKALI untuk camera saat pertama kali dimuat"""
+        if camera_id in self.snapshot_done:
+            return  # Sudah pernah di-snapshot
+        
+        # Mark as done (bahkan sebelum berhasil, untuk mencegah retry)
+        self.snapshot_done.add(camera_id)
+        
+        # Request snapshot
+        self.preview_scheduler.request_snapshot(
+            camera_id,
+            callback=self._on_snapshot_received,
+            error_callback=self._on_snapshot_error
+        )
 
     def _hide_empty_label(self):
         """Helper method untuk menyembunyikan empty label dengan safe"""
@@ -510,6 +534,7 @@ class CameraList(QWidget):
 
     def _on_camera_added(self, camera_id, name, ip_address, port, protocol,
                          username, password, stream_path, url, roi_points):
+        """Handler ketika camera baru ditambahkan"""
         if not camera_id:
             QMessageBox.warning(self, "DB Error", "Failed to add camera.")
             return
@@ -538,6 +563,9 @@ class CameraList(QWidget):
             'protocol': protocol, 'username': username, 'password': password,
             'stream_path': stream_path, 'url': url, 'roi_points': roi_points
         })
+        
+        # Request ONE-TIME snapshot untuk camera baru
+        self._request_initial_snapshot(camera_id)
     
     def edit_camera(self, camera_id):
         camera_data = self.db_manager.get_camera(camera_id)
@@ -606,48 +634,73 @@ class CameraList(QWidget):
 
 
     def _on_camera_deleted(self, success: bool, name: str, camera_id: int):
-        """Callback di GUI‑thread setelah DELETE selesai."""
+        """Cleanup saat camera dihapus"""
         if not success:
             QMessageBox.warning(self.window(), "Delete Failed",
                                 "Failed to delete camera. Please try again.")
             return
 
-        # hapus item dari dict & layout, atau reload penuh
+        # Cleanup tracking
         self.active_cameras.pop(camera_id, None)
-        self.load_cameras()                   # paling sederhana
-
+        self.snapshot_done.discard(camera_id)  # Remove dari set
+        
+        self.load_cameras()
+        
         QMessageBox.information(self.window(), "Camera Deleted",
                                 f"Camera '{name}' has been deleted.")
     
     def _refresh_previews(self):
         """
-        Timer‑callback: kirim SnapshotWorker hanya untuk CameraItem online.
+        Optional: Update preview HANYA untuk cameras yang sedang streaming.
+        Method ini bisa dipanggil manual jika diperlukan.
         """
-        from preview_scheduler import SnapshotWorker
-
         for i in range(self.cameras_layout.count()):
+            widget = self.cameras_layout.itemAt(i).widget()
+            if not isinstance(widget, CameraItem):
+                continue
+                
+            # HANYA update camera yang sedang streaming
             cam = self.active_cameras.get(widget.camera_id)
-            # Jika sudah streaming, cukup pakai frame terakhir
             if cam and cam.connection_status:
                 frame = cam.get_last_frame()
                 if frame is not None:
                     widget.set_preview(frame)
-                continue
-
-            # Fallback lama (offline → grab satu frame RTSP)
-            worker = SnapshotWorker(self.active_cameras, widget.camera_id)
+    
+    def _on_snapshot_received(self, camera_id: int, frame: np.ndarray):
+        """Callback di GUI thread saat snapshot diterima"""
+        # Find the camera widget
+        for i in range(self.cameras_layout.count()):
+            widget = self.cameras_layout.itemAt(i).widget()
+            if isinstance(widget, CameraItem) and widget.camera_id == camera_id:
+                # Convert numpy array ke QPixmap di GUI thread
+                pixmap = convert_cv_to_pixmap(frame, QSize(160, 90))
+                if not pixmap.isNull():
+                    widget.set_preview(pixmap)
+                    # Update status menjadi online karena snapshot berhasil
+                    widget.update_status(True)
+                break
+    
+    def _on_snapshot_error(self, camera_id: int, error_msg: str):
+        """Handle snapshot errors"""
+        logger.debug(f"Snapshot error for camera {camera_id}: {error_msg}")
 
     def _refresh_statuses(self):
-        """
-        Timer‑callback: ping setiap kamera untuk update status online/offline.
-        """
-        from ping_scheduler import PingWorker
-
+        """Periodic ping untuk update status online/offline"""
         for i in range(self.cameras_layout.count()):
-            widget: Any = self.cameras_layout.itemAt(i).widget()
-            if not isinstance(widget, CameraItem):   # <<< SKIP non‑CameraItem
+            widget = self.cameras_layout.itemAt(i).widget()
+            if not isinstance(widget, CameraItem):
                 continue
-
+            
+            # Untuk camera yang sedang streaming, ambil frame terakhir
+            cam = self.active_cameras.get(widget.camera_id)
+            if cam and cam.connection_status:
+                frame = cam.get_last_frame()
+                if frame is not None:
+                    widget.set_preview(frame)
+                    widget.update_status(True)
+                continue
+            
+            # Ping untuk update status
             worker = PingWorker(widget.camera_id, widget.ip_address, widget.port)
             worker.signals.finished.connect(
                 lambda cid, ok, ref=widget:
@@ -656,17 +709,16 @@ class CameraList(QWidget):
             self.ping_pool.start(worker)
     
     def showEvent(self, e):
+        """Saat widget ditampilkan"""
         super().showEvent(e)
-        if not self.preview_timer.isActive():
-            self.preview_timer.start()
+        # Hanya start ping timer
         if not self.ping_timer.isActive():
             self.ping_timer.start()
-
+    
     def hideEvent(self, e):
+        """Saat widget disembunyikan"""
         super().hideEvent(e)
-        self.preview_timer.stop()
         self.ping_timer.stop()
-
 
 
 class MainWindow(QMainWindow):

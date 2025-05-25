@@ -29,7 +29,7 @@ class SnapshotWorker(QRunnable):
         self.signals = SnapshotSignal()
 
     def run(self):
-        """Execute snapshot capture with comprehensive error handling"""
+        """Execute snapshot capture - hanya numpy array, tanpa Qt GUI objects"""
         cap = None
         try:
             # Dapatkan camera object dengan safe access
@@ -57,27 +57,33 @@ class SnapshotWorker(QRunnable):
                     self.signals.error.emit(self.camera_id, "Failed to open video capture")
                     return
                 
-                # Set properties dengan error checking
-                cap.set(cv.CAP_PROP_FRAME_WIDTH, 160)
-                cap.set(cv.CAP_PROP_FRAME_HEIGHT, 90)
-                cap.set(cv.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer untuk snapshot
+                # Set properties untuk snapshot kecil
+                cap.set(cv.CAP_PROP_FRAME_WIDTH, 320)   # Lebih besar untuk kualitas lebih baik
+                cap.set(cv.CAP_PROP_FRAME_HEIGHT, 180)  # Maintain 16:9 ratio
+                cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
                 
                 # Attempt to read frame dengan retry mechanism
                 frame = None
-                for attempt in range(3):  # Try up to 3 times
+                max_attempts = 3
+                
+                for attempt in range(max_attempts):
                     ret, frame = cap.read()
-                    if ret and frame is not None:
+                    if ret and frame is not None and frame.size > 0:
                         break
-                    elif attempt < 2:  # Don't sleep on last attempt
-                        import time
+                    elif attempt < max_attempts - 1:
                         time.sleep(0.1)  # Brief pause between attempts
                 
-                # Release VideoCapture immediately setelah capture
+                # Release VideoCapture immediately
                 cap.release()
                 cap = None
                 
-                # Process frame jika berhasil
+                # PENTING: Kirim numpy array, BUKAN QPixmap!
                 if frame is not None and frame.size > 0:
+                    # Resize frame untuk preview jika terlalu besar
+                    if frame.shape[1] > 160 or frame.shape[0] > 90:
+                        frame = cv.resize(frame, (160, 90), interpolation=cv.INTER_AREA)
+                    
+                    # Emit numpy array (copy untuk thread safety)
                     self.signals.finished.emit(self.camera_id, frame.copy())
                 else:
                     self.signals.error.emit(self.camera_id, "Failed to capture frame")
@@ -92,55 +98,57 @@ class SnapshotWorker(QRunnable):
                 try:
                     cap.release()
                 except:
-                    pass  # Ignore errors during cleanup
+                    pass
+                
 
-    def _safe_convert_to_pixmap(self, cv_frame: np.ndarray, target_size: QSize)
+class PreviewScheduler(QObject):
+    """
+    Scheduler untuk mengatur preview updates dengan thread-safe approach.
+    Konversi ke QPixmap dilakukan di GUI thread.
+    """
+    def __init__(self, camera_dict: dict[int, Camera], parent=None):
+        super().__init__(parent)
+        self.camera_dict = camera_dict
+        self.pending_workers = set()  # Track active workers
+        
+    def request_snapshot(self, camera_id: int, callback=None, error_callback=None):
         """
-        Thread-safe conversion dari OpenCV frame ke QPixmap
-        dengan comprehensive error handling
+        Request snapshot untuk camera tertentu.
+        
+        Args:
+            camera_id: ID camera
+            callback: Fungsi yang dipanggil dengan (camera_id, numpy_array)
+            error_callback: Fungsi yang dipanggil dengan (camera_id, error_msg)
         """
-        try:
-            # Validate input frame
-            if cv_frame is None or cv_frame.size == 0:
-                return QPixmap()
+        if camera_id in self.pending_workers:
+            return  # Skip if already processing
             
-            # Ensure frame is in correct format (BGR)
-            if len(cv_frame.shape) != 3 or cv_frame.shape[2] != 3:
-                return QPixmap()
-            
-            # Convert BGR to RGB
-            rgb_frame = cv.cvtColor(cv_frame, cv.COLOR_BGR2RGB)
-            
-            # Get frame dimensions
-            height, width, channels = rgb_frame.shape
-            bytes_per_line = channels * width
-            
-            # Create QImage dengan proper format
-            qt_image = QImage(
-                rgb_frame.data.tobytes(),  # Explicit conversion to bytes
-                width, 
-                height, 
-                bytes_per_line, 
-                QImage.Format_RGB888
+        worker = SnapshotWorker(self.camera_dict, camera_id)
+        
+        # Connect callbacks
+        if callback:
+            worker.signals.finished.connect(
+                lambda cid, frame: self._handle_snapshot(cid, frame, callback)
             )
+        
+        if error_callback:
+            worker.signals.error.connect(error_callback)
             
-            # Validate QImage creation
-            if qt_image.isNull():
-                return QPixmap()
-            
-            # Convert to QPixmap
-            pixmap = QPixmap.fromImage(qt_image)
-            
-            # Scale to target size jika diperlukan
-            if target_size.isValid() and not pixmap.isNull():
-                pixmap = pixmap.scaled(
-                    target_size, 
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                )
-            
-            return pixmap
-            
-        except Exception as e:
-            logger.error(f"Pixmap conversion error: {e}")
-            return QPixmap()
+        # Track worker
+        self.pending_workers.add(camera_id)
+        worker.signals.finished.connect(
+            lambda cid, _: self.pending_workers.discard(cid)
+        )
+        worker.signals.error.connect(
+            lambda cid, _: self.pending_workers.discard(cid)
+        )
+        
+        # Start worker
+        from PySide6.QtCore import QThreadPool
+        QThreadPool.globalInstance().start(worker)
+    
+    def _handle_snapshot(self, camera_id: int, frame: np.ndarray, callback):
+        """Handle snapshot result di GUI thread"""
+        # Di sini kita di GUI thread, jadi aman untuk convert ke QPixmap
+        # jika callback membutuhkannya
+        callback(camera_id, frame)

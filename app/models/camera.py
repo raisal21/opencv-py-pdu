@@ -63,6 +63,7 @@ class Camera:
         # Thread dan mutex
         self.mutex = QMutex()
         self.thread = None
+
     def build_stream_url(self):
         """
         Membuat URL lengkap untuk stream kamera RTSP.
@@ -109,6 +110,8 @@ class Camera:
 
             try:
                 self.capture = cv.VideoCapture(url, cv.CAP_FFMPEG, params)
+                if hasattr(cv, "CAP_PROP_THREAD_COUNT"):
+                    cap.set(cv.CAP_PROP_THREAD_COUNT, 1)
             except (cv.error, AttributeError):
                 logging.warning("CAP_PROP_OPEN_TIMEOUT_MSEC tidak tersedia — memakai fallback tanpa timeout")
                 self.capture = cv.VideoCapture(url, cv.CAP_FFMPEG)

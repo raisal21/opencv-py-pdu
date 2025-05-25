@@ -614,57 +614,56 @@ class CameraDetailUI(QMainWindow):
     
     def init_camera(self):
         """Initialize camera and start video stream"""
-        try:
-            # Create camera instance from the camera data
-            self.camera_instance = Camera.from_dict(self.camera_data)
-            
-            if self.camera_data.get('roi_points'):
-                self.camera_instance.roi_points = self.camera_data['roi_points']
+        # Create camera instance from the camera data
+        self.camera_instance = Camera.from_dict(self.camera_data)
+        
+        if self.camera_data.get('roi_points'):
+            self.camera_instance.roi_points = self.camera_data['roi_points']
 
-            self.init_material_detector()  
-            self.video_display.set_connecting_message()
+        self.init_material_detector()  
+        self.video_display.set_connecting_message()
 
-            def _attempt_connect(retry_left=3):
-                if self.camera_instance.connect():
-                    self.camera_instance.start_stream()
-                    # FIXED: Gunakan camera_instance konsisten
-                    self.camera_instance.set_preview_mode(False)
-                    cam_thread = self.camera_instance.thread
-                    
-                    if not self.worker_thread:  # agar tak duplikat
-                        self.worker_thread = QThread(self)
+        def _attempt_connect(retry_left=3):
+            if self.camera_instance.connect():
+                self.camera_instance.start_stream()
+                # FIXED: Gunakan camera_instance konsisten
+                self.camera_instance.set_preview_mode(False)
+                cam_thread = self.camera_instance.thread
+                
+                if not self.worker_thread:  # agar tak duplikat
+                    self.worker_thread = QThread(self)
 
-                        bg_params = BG_PRESETS["default"]
-                        contour_params = CONTOUR_PRESETS["standard"]
+                    bg_params = BG_PRESETS["default"]
+                    contour_params = CONTOUR_PRESETS["standard"]
 
-                        self.frame_processor = FrameProcessor(
-                            self.camera_instance,  # FIXED: konsisten menggunakan camera_instance
-                            bg_params,
-                            contour_params
-                        )
-                        self.frame_processor.moveToThread(self.worker_thread)
-
-                        cam_thread.frame_received.connect(
-                            self.frame_processor.process, Qt.QueuedConnection
-                        )
-                        self.frame_processor.processed.connect(
-                            self.on_processed_frame, Qt.QueuedConnection
-                        )
-                        self.worker_thread.start()
-                        
-                    cam_thread.error_occurred.connect(self.handle_camera_error)
-                    cam_thread.connection_changed.connect(self.handle_connection_change)
-                elif retry_left > 0:
-                    QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
-                else:
-                    self.video_display.set_offline_message()
-                    QMessageBox.warning(
-                        self, "Camera Connection Error",
-                        f"Failed to connect to camera: {self.camera_instance.last_error}"
+                    self.frame_processor = FrameProcessor(
+                        self.camera_instance,  # FIXED: konsisten menggunakan camera_instance
+                        bg_params,
+                        contour_params
                     )
-            
-            # panggil pertama kali 100 ms setelah UI siap
-            QTimer.singleShot(100, _attempt_connect)
+                    self.frame_processor.moveToThread(self.worker_thread)
+
+                    cam_thread.frame_received.connect(
+                        self.frame_processor.process, Qt.QueuedConnection
+                    )
+                    self.frame_processor.processed.connect(
+                        self.on_processed_frame, Qt.QueuedConnection
+                    )
+                    self.worker_thread.start()
+                    
+                cam_thread.error_occurred.connect(self.handle_camera_error)
+                cam_thread.connection_changed.connect(self.handle_connection_change)
+            elif retry_left > 0:
+                QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
+            else:
+                self.video_display.set_offline_message()
+                QMessageBox.warning(
+                    self, "Camera Connection Error",
+                    f"Failed to connect to camera: {self.camera_instance.last_error}"
+                )
+        
+        # panggil pertama kali 100 ms setelah UI siap
+        QTimer.singleShot(100, _attempt_connect)
     
     def edit_roi(self):
         """Open ROI selector dialog and update camera ROI points"""

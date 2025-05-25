@@ -626,18 +626,16 @@ class CameraList(QWidget):
         from preview_scheduler import SnapshotWorker
 
         for i in range(self.cameras_layout.count()):
-            widget: Any = self.cameras_layout.itemAt(i).widget()
-            if not isinstance(widget, CameraItem):   # <<< SKIP non‑CameraItem
-                continue
-            if not widget.is_online:
+            cam = self.active_cameras.get(widget.camera_id)
+            # Jika sudah streaming, cukup pakai frame terakhir
+            if cam and cam.connection_status:
+                frame = cam.get_last_frame()
+                if frame is not None:
+                    widget.set_preview(frame)
                 continue
 
+            # Fallback lama (offline → grab satu frame RTSP)
             worker = SnapshotWorker(self.active_cameras, widget.camera_id)
-            worker.signals.finished.connect(
-                lambda cid, pixmap, ref=widget:
-                    ref.set_preview(pixmap) if ref.camera_id == cid else None
-            )
-            self.preview_pool.start(worker)
 
     def _refresh_statuses(self):
         """

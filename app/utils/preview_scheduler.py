@@ -141,3 +141,55 @@ class SnapshotWorker(QRunnable):
         except Exception as e:
             logger.error(f"Snapshot error for camera {self.camera_id}: {str(e)}")
             self.signals.error.emit(self.camera_id, str(e))
+
+class PreviewScheduler(QObject):
+    """
+    Scheduler untuk mengatur preview updates dengan thread-safe approach.
+    Konversi ke QPixmap dilakukan di GUI thread.
+    """
+    def __init__(self, camera_dict: dict[int, Camera], parent=None):
+        super().__init__(parent)
+        self.camera_dict = camera_dict
+        self.pending_workers = set()  # Track active workers
+        
+    def request_snapshot(self, camera_id: int, callback=None, error_callback=None):
+        """
+        Request snapshot untuk camera tertentu.
+        
+        Args:
+            camera_id: ID camera
+            callback: Fungsi yang dipanggil dengan (camera_id, numpy_array)
+            error_callback: Fungsi yang dipanggil dengan (camera_id, error_msg)
+        """
+        if camera_id in self.pending_workers:
+            return  # Skip if already processing
+            
+        worker = SnapshotWorker(self.camera_dict, camera_id)
+        
+        # Connect callbacks
+        if callback:
+            worker.signals.finished.connect(
+                lambda cid, frame: self._handle_snapshot(cid, frame, callback)
+            )
+        
+        if error_callback:
+            worker.signals.error.connect(error_callback)
+            
+        # Track worker
+        self.pending_workers.add(camera_id)
+        worker.signals.finished.connect(
+            lambda cid, _: self.pending_workers.discard(cid)
+        )
+        worker.signals.error.connect(
+            lambda cid, _: self.pending_workers.discard(cid)
+        )
+        
+        # Start worker
+        from PySide6.QtCore import QThreadPool
+        QThreadPool.globalInstance().start(worker)
+    
+    def _handle_snapshot(self, camera_id: int, frame: np.ndarray, callback):
+        """Handle snapshot result di GUI thread"""
+        # Di sini kita di GUI thread, jadi aman untuk convert ke QPixmap
+        # jika callback membutuhkannya
+        callback(camera_id, frame)

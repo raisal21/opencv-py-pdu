@@ -1,8 +1,30 @@
 import sys
+import platform
+import os
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QFontDatabase, QFont
-import os
+from PySide6.QtCore import QThreadPool
 from resources import resource_path
+
+# Platform specific settings
+if platform.system() == "Windows":
+    # Windows optimizations
+    os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"  # Disable MSMF
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+    
+    # Set thread pool size based on CPU cores
+    import multiprocessing
+    cpu_count = multiprocessing.cpu_count()
+    QThreadPool.globalInstance().setMaxThreadCount(max(2, cpu_count // 2))
+    
+elif platform.system() == "Darwin":  # macOS
+    # macOS specific fixes
+    import cv2 as cv
+    cv.setNumThreads(1)  # Force single thread for OpenCV
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+    
+    # Limit global thread pool
+    QThreadPool.globalInstance().setMaxThreadCount(2)
 
 
 def load_fonts():

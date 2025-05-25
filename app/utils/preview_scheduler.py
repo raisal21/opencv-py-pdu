@@ -1,68 +1,124 @@
-# preview_scheduler.py - Updated untuk thread safety
 import logging
 import cv2 as cv
 import numpy as np
-from PySide6.QtCore import QRunnable, Signal, QObject, QMetaObject, Qt, QMutex, QMutexLocker
-from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtCore import QSize
+import time
+import platform
+from PySide6.QtCore import QRunnable, Signal, QObject, QMutex, QMutexLocker
 from models.camera import Camera
 
-logger = logging.getLogger(__name__) 
-
-class SnapshotSignal(QObject):
-    """Pembungkus sinyal untuk dikirim balik ke GUI‑thread"""
-    finished = Signal(int, np.ndarray)
-    error = Signal(int, str)  # Tambahkan error signal
+logger = logging.getLogger(__name__)
 
 # Global mutex untuk mencegah multiple VideoCapture conflicts
 _capture_mutex = QMutex()
 
+# Connection pool untuk reuse VideoCapture
+class VideoCapturePool:
+    def __init__(self, max_size=3):
+        self.pool = {}
+        self.max_size = max_size
+        self.mutex = QMutex()
+        self.last_used = {}
+    
+    def get_capture(self, url):
+        with QMutexLocker(self.mutex):
+            # Check if exists in pool
+            if url in self.pool:
+                self.last_used[url] = time.time()
+                return self.pool[url]
+            
+            # Create new if pool not full
+            if len(self.pool) < self.max_size:
+                cap = self._create_capture(url)
+                if cap and cap.isOpened():
+                    self.pool[url] = cap
+                    self.last_used[url] = time.time()
+                    return cap
+            
+            # Release oldest and create new
+            oldest_url = min(self.last_used, key=self.last_used.get)
+            old_cap = self.pool.pop(oldest_url)
+            try:
+                old_cap.release()
+            except:
+                pass
+            del self.last_used[oldest_url]
+            
+            # Create new
+            cap = self._create_capture(url)
+            if cap and cap.isOpened():
+                self.pool[url] = cap
+                self.last_used[url] = time.time()
+                return cap
+            
+            return None
+    
+    def _create_capture(self, url):
+        try:
+            cap = cv.VideoCapture(url, cv.CAP_FFMPEG)
+            
+            # Platform specific settings
+            if platform.system() == "Windows":
+                cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv.CAP_PROP_FRAME_WIDTH, 320)
+                cap.set(cv.CAP_PROP_FRAME_HEIGHT, 180)
+            elif platform.system() == "Darwin":  # macOS
+                cap.set(cv.CAP_PROP_HW_ACCELERATION, 0)
+                
+            return cap
+        except Exception as e:
+            logger.error(f"Failed to create capture: {e}")
+            return None
+    
+    def release_all(self):
+        with QMutexLocker(self.mutex):
+            for cap in self.pool.values():
+                try:
+                    cap.release()
+                except:
+                    pass
+            self.pool.clear()
+            self.last_used.clear()
+
+# Global pool instance
+_capture_pool = VideoCapturePool()
+
+
+class SnapshotSignal(QObject):
+    finished = Signal(int, np.ndarray)
+    error = Signal(int, str)
+
+
 class SnapshotWorker(QRunnable):
-    """
-    Thread-safe snapshot worker dengan proper error handling
-    dan memory management
-    """
     def __init__(self, cam_dict: dict[int, Camera], camera_id: int):
         super().__init__()
         self.camera_id = camera_id
         self.camera_dict = cam_dict
         self.signals = SnapshotSignal()
+        self.setAutoDelete(True)  # Important for cleanup
 
     def run(self):
-        """Execute snapshot capture - hanya numpy array, tanpa Qt GUI objects"""
         cap = None
         try:
-            # Dapatkan camera object dengan safe access
             if self.camera_id not in self.camera_dict:
-                self.signals.error.emit(self.camera_id, "Camera not found in dictionary")
+                self.signals.error.emit(self.camera_id, "Camera not found")
                 return
                 
-            cam: Camera = self.camera_dict[self.camera_id]
+            cam = self.camera_dict[self.camera_id]
             rtsp_url = cam.build_stream_url()
             
-            # Validate URL sebelum membuat VideoCapture
-            if not rtsp_url or not isinstance(rtsp_url, str):
-                self.signals.error.emit(self.camera_id, "Invalid RTSP URL")
+            if not rtsp_url:
+                self.signals.error.emit(self.camera_id, "Invalid URL")
                 return
 
-            # Use mutex untuk mencegah multiple VideoCapture conflicts
+            # Use connection pool
             with QMutexLocker(_capture_mutex):
-                # Create VideoCapture dengan timeout dan error handling
-                cap = cv.VideoCapture(rtsp_url, cv.CAP_FFMPEG)
-
-                if hasattr(cv, "CAP_PROP_THREAD_COUNT"):
-                    cap.set(cv.CAP_PROP_THREAD_COUNT, 1)
+                cap = _capture_pool.get_capture(rtsp_url)
                 
-                if not cap.isOpened():
-                    self.signals.error.emit(self.camera_id, "Failed to open video capture")
+                if not cap:
+                    self.signals.error.emit(self.camera_id, "Failed to open capture")
                     return
                 
-                # Set properties untuk snapshot kecil
-                cap.set(cv.CAP_PROP_FRAME_WIDTH, 320)   # Lebih besar untuk kualitas lebih baik
-                cap.set(cv.CAP_PROP_FRAME_HEIGHT, 180)  # Maintain 16:9 ratio
-                cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
-                
-                # Attempt to read frame dengan retry mechanism
+                # Read with timeout
                 frame = None
                 max_attempts = 3
                 
@@ -70,85 +126,18 @@ class SnapshotWorker(QRunnable):
                     ret, frame = cap.read()
                     if ret and frame is not None and frame.size > 0:
                         break
-                    elif attempt < max_attempts - 1:
-                        time.sleep(0.1)  # Brief pause between attempts
+                    time.sleep(0.05)
                 
-                # Release VideoCapture immediately
-                cap.release()
+                # Don't release - pool will manage it
                 cap = None
                 
-                # PENTING: Kirim numpy array, BUKAN QPixmap!
                 if frame is not None and frame.size > 0:
-                    # Resize frame untuk preview jika terlalu besar
-                    if frame.shape[1] > 160 or frame.shape[0] > 90:
-                        frame = cv.resize(frame, (160, 90), interpolation=cv.INTER_AREA)
-                    
-                    # Emit numpy array (copy untuk thread safety)
-                    self.signals.finished.emit(self.camera_id, frame.copy())
+                    # Resize for preview
+                    frame_resized = cv.resize(frame, (160, 90), interpolation=cv.INTER_AREA)
+                    self.signals.finished.emit(self.camera_id, frame_resized.copy())
                 else:
                     self.signals.error.emit(self.camera_id, "Failed to capture frame")
                     
         except Exception as e:
-            error_msg = f"Snapshot error: {str(e)}"
-            logger.error(f"Camera {self.camera_id}: {error_msg}")
-            self.signals.error.emit(self.camera_id, error_msg)
-        finally:
-            # Ensure VideoCapture is always released
-            if cap is not None:
-                try:
-                    cap.release()
-                except:
-                    pass
-                
-
-class PreviewScheduler(QObject):
-    """
-    Scheduler untuk mengatur preview updates dengan thread-safe approach.
-    Konversi ke QPixmap dilakukan di GUI thread.
-    """
-    def __init__(self, camera_dict: dict[int, Camera], parent=None):
-        super().__init__(parent)
-        self.camera_dict = camera_dict
-        self.pending_workers = set()  # Track active workers
-        
-    def request_snapshot(self, camera_id: int, callback=None, error_callback=None):
-        """
-        Request snapshot untuk camera tertentu.
-        
-        Args:
-            camera_id: ID camera
-            callback: Fungsi yang dipanggil dengan (camera_id, numpy_array)
-            error_callback: Fungsi yang dipanggil dengan (camera_id, error_msg)
-        """
-        if camera_id in self.pending_workers:
-            return  # Skip if already processing
-            
-        worker = SnapshotWorker(self.camera_dict, camera_id)
-        
-        # Connect callbacks
-        if callback:
-            worker.signals.finished.connect(
-                lambda cid, frame: self._handle_snapshot(cid, frame, callback)
-            )
-        
-        if error_callback:
-            worker.signals.error.connect(error_callback)
-            
-        # Track worker
-        self.pending_workers.add(camera_id)
-        worker.signals.finished.connect(
-            lambda cid, _: self.pending_workers.discard(cid)
-        )
-        worker.signals.error.connect(
-            lambda cid, _: self.pending_workers.discard(cid)
-        )
-        
-        # Start worker
-        from PySide6.QtCore import QThreadPool
-        QThreadPool.globalInstance().start(worker)
-    
-    def _handle_snapshot(self, camera_id: int, frame: np.ndarray, callback):
-        """Handle snapshot result di GUI thread"""
-        # Di sini kita di GUI thread, jadi aman untuk convert ke QPixmap
-        # jika callback membutuhkannya
-        callback(camera_id, frame)
+            logger.error(f"Snapshot error for camera {self.camera_id}: {str(e)}")
+            self.signals.error.emit(self.camera_id, str(e))

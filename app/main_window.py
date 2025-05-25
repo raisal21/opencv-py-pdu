@@ -333,13 +333,14 @@ class CameraList(QWidget):
         self.snapshot_done = set()
 
         self.ping_pool   = QThreadPool.globalInstance()
-        self.ping_pool.setMaxThreadCount(4)
+        self.ping_pool.setMaxThreadCount(2
+        )
         self.ping_timer  = QTimer(self)
         self.ping_timer.timeout.connect(self._refresh_statuses)
-        self.ping_timer.start(20000)
+        self.ping_timer.start(30000)
 
         self.preview_pool = QThreadPool.globalInstance()
-        self.preview_pool.setMaxThreadCount(4)
+        self.preview_pool.setMaxThreadCount(2)
         self.preview_scheduler = PreviewScheduler(self.active_cameras)
         
         # Layout utama
@@ -719,6 +720,22 @@ class CameraList(QWidget):
         """Saat widget disembunyikan"""
         super().hideEvent(e)
         self.ping_timer.stop()
+
+    def closeEvent(self, event):
+        """Proper cleanup on close"""
+        # Stop all timers
+        self.ping_timer.stop()
+        
+        # Wait for thread pools to finish
+        self.db_pool.waitForDone(2000)
+        self.ping_pool.waitForDone(2000)
+        self.preview_pool.waitForDone(2000)
+        
+        # Release video capture pool
+        from utils.preview_scheduler import _capture_pool
+        _capture_pool.release_all()
+        
+        super().closeEvent(event)
 
 
 class MainWindow(QMainWindow):

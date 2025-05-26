@@ -4,9 +4,8 @@ import os
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QFontDatabase, QFont
 from PySide6.QtCore import QThreadPool
-from resources import resource_path
 
-# Platform specific settings
+# Platform specific settings BEFORE any imports
 if platform.system() == "Windows":
     # Windows optimizations
     os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"  # Disable MSMF
@@ -15,16 +14,15 @@ if platform.system() == "Windows":
     # Set thread pool size based on CPU cores
     import multiprocessing
     cpu_count = multiprocessing.cpu_count()
-    QThreadPool.globalInstance().setMaxThreadCount(max(2, cpu_count // 2))
+    # Defer thread pool configuration until after QApplication
     
 elif platform.system() == "Darwin":  # macOS
     # macOS specific fixes
-    import cv2 as cv
-    cv.setNumThreads(1)  # Force single thread for OpenCV
     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-    
-    # Limit global thread pool
-    QThreadPool.globalInstance().setMaxThreadCount(2)
+
+# Import after environment setup
+from resources import resource_path
+from utils.log import setup as setup_logging, setup_file_logging
 
 
 def load_fonts():
@@ -59,9 +57,35 @@ def load_fonts():
     
     return True
 
+
 if __name__ == "__main__":
-    # Create the application
+    # Setup basic console logging first
+    debug_mode = "--debug" in sys.argv
+    setup_logging(debug=debug_mode)
+    
+    # Create the application FIRST
     app = QApplication(sys.argv)
+    
+    # NOW configure thread pool and other Qt-dependent settings
+    if platform.system() == "Windows":
+        import multiprocessing
+        cpu_count = multiprocessing.cpu_count()
+        QThreadPool.globalInstance().setMaxThreadCount(max(2, cpu_count // 2))
+    elif platform.system() == "Darwin":
+        # Limit global thread pool for macOS
+        QThreadPool.globalInstance().setMaxThreadCount(2)
+        # Import cv2 AFTER QApplication
+        try:
+            import cv2 as cv
+            cv.setNumThreads(1)
+        except ImportError:
+            pass
+    
+    # Setup file logging AFTER QApplication is created
+    try:
+        setup_file_logging(debug=debug_mode)
+    except Exception as e:
+        print(f"Warning: Could not setup file logging: {e}")
     
     # Load and set Inter as the default font
     if load_fonts():
@@ -79,11 +103,18 @@ if __name__ == "__main__":
         else:
             print("Inter font family not found after loading")
     
-    # Import dan jalankan aplikasi utama setelah font diatur
-    from main_window import MainWindow
-    
-    window = MainWindow()
-    window.show()
-    
-    # Start the event loop
-    sys.exit(app.exec())
+    # Import dan jalankan aplikasi utama setelah semua setup selesai
+    try:
+        from main_window import MainWindow
+        
+        window = MainWindow()
+        window.show()
+        
+        # Start the event loop
+        sys.exit(app.exec())
+        
+    except Exception as e:
+        import traceback
+        logging.error(f"Failed to start application: {e}")
+        traceback.print_exc()
+        sys.exit(1)

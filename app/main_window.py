@@ -916,6 +916,32 @@ class MainWindow(QMainWindow):
         cameras = self.db_manager.get_all_cameras()
         camera_count = len(cameras)
         self.statusBar().showMessage(f"{camera_count} Cameras Connected | Database: Connected")
+
+    def pause_background_tasks(self):
+        """Pause all background tasks when camera detail is opened"""
+        # Stop clock timer
+        if hasattr(self, 'clock_timer') and self.clock_timer.isActive():
+            self.clock_timer.stop()
+        
+        # Stop ping timer in camera list
+        if hasattr(self, 'camera_list') and hasattr(self.camera_list, 'ping_timer'):
+            if self.camera_list.ping_timer.isActive():
+                self.camera_list.ping_timer.stop()
+        
+        # Optional: Clear pending workers to free thread pool
+        if hasattr(self.camera_list, 'ping_pool'):
+            self.camera_list.ping_pool.clear()
+
+    def resume_background_tasks(self):
+        """Resume all background tasks when returning from camera detail"""
+        # Restart clock timer
+        if hasattr(self, 'clock_timer'):
+            self.clock_timer.start(1000)
+            self.update_clock()  # Update immediately
+        
+        # Restart ping timer in camera list
+        if hasattr(self, 'camera_list') and hasattr(self.camera_list, 'ping_timer'):
+            self.camera_list.ping_timer.start(30000)
     
     def show_add_camera_dialog(self):
         """Tampilkan dialog untuk menambahkan kamera baru"""
@@ -954,17 +980,25 @@ class MainWindow(QMainWindow):
                 )
     
     def open_camera_detail(self, camera_id):
-        """Buka halaman detail kamera"""
+        """Buka halaman detail kamera dengan timer management"""
         # Ambil data kamera dari database
         camera_data = self.db_manager.get_camera(camera_id)
-
+        
         if camera_data:
+            # Pause background tasks BEFORE opening camera detail
+            self.pause_background_tasks()
+            
             from views.camera_detail import CameraDetailUI
             camera_detail = CameraDetailUI(camera_data, parent=self)
-
-            self.hide()
+            
+            # Store reference for cleanup
             self._detail_window = camera_detail
-
+            
+            # Connect to destroyed signal to resume tasks
+            camera_detail.destroyed.connect(self.resume_background_tasks)
+            
+            # Hide main window and show camera detail
+            self.hide()
             camera_detail.init_camera()
             camera_detail.show()
         else:
@@ -973,7 +1007,20 @@ class MainWindow(QMainWindow):
                 "Camera Not Found",
                 f"Camera with ID {camera_id} not found."
             )
-
+    
+    def closeEvent(self, event):
+        """Cleanup saat aplikasi ditutup"""
+        # Stop all timers
+        if hasattr(self, 'clock_timer'):
+            self.clock_timer.stop()
+        
+        # Cleanup camera list
+        if hasattr(self, 'camera_list'):
+            self.camera_list.close()
+        
+        # Accept the close event
+        super().closeEvent(event)
+    
 
 
 if __name__ == "__main__":

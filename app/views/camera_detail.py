@@ -245,6 +245,9 @@ class CameraDetailUI(QMainWindow):
     def __init__(self, camera_data, parent=None):
         super().__init__(parent)
 
+        self._is_closing = False
+        self._cleanup_done = False
+
         # Save camera data
         self.camera_data = camera_data
         self.camera_instance = None
@@ -565,37 +568,55 @@ class CameraDetailUI(QMainWindow):
     
     @Slot(np.ndarray, dict)
     def on_processed_frame(self, display_frame, metrics):
-        """Update UI dari worker."""
-        self.current_metrics = metrics or {}
-        self.current_coverage_percent = int(
-            metrics.get("processed_coverage_percent", 0)
-        )
-        self.video_display.update_frame(display_frame)
+        """Update UI dari worker - dengan safety check"""
+        if self._is_closing:
+            return  # Skip update if closing
+            
+        try:
+            self.current_metrics = metrics or {}
+            self.current_coverage_percent = int(
+                metrics.get("processed_coverage_percent", 0)
+            )
+            self.video_display.update_frame(display_frame)
+        except RuntimeError:
+            # Widget might be deleted
+            pass
     
     def update_coverage_display(self):
-        """Update the coverage status and graph with the latest metrics (called every 5 seconds)"""
-        if self.current_metrics:
-            # Update the coverage status widget
-            coverage_percent = int(self.current_coverage_percent)
-            self.coverage_status.updateStatus(coverage_percent)
+        """Update coverage display with safety checks"""
+        if self._is_closing:
+            return
             
-            # Add new data point to history with current timestamp
-            current_time = datetime.datetime.now()
-            new_data_point = {
-                "timestamp": current_time,
-                "value": coverage_percent
-            }
-            
-            # Add to history and maintain only the most recent 5 entries
-            self.coverage_history.insert(0, new_data_point)
-            if len(self.coverage_history) > 5:
-                self.coverage_history = self.coverage_history[:5]
-            
-            # Update the graph with the new history
-            self.graph.update_data(self.coverage_history)
-            
-            # Buffer measurement for later batch save (instead of saving every time)
-            self.coverage_logger.log_measurement(self.camera_data['id'], coverage_percent)
+        try:
+            if self.current_metrics:
+                # Update the coverage status widget
+                coverage_percent = int(self.current_coverage_percent)
+                self.coverage_status.updateStatus(coverage_percent)
+                
+                # Add new data point to history with current timestamp
+                current_time = datetime.datetime.now()
+                new_data_point = {
+                    "timestamp": current_time,
+                    "value": coverage_percent
+                }
+                
+                # Add to history and maintain only the most recent 5 entries
+                self.coverage_history.insert(0, new_data_point)
+                if len(self.coverage_history) > 5:
+                    self.coverage_history = self.coverage_history[:5]
+                
+                # Update the graph with the new history
+                self.graph.update_data(self.coverage_history)
+                
+                # Log measurement with thread-safe check
+                if hasattr(self, 'coverage_logger') and self.coverage_logger:
+                    self.coverage_logger.log_measurement(
+                        self.camera_data['id'], 
+                        coverage_percent
+                    )
+        except RuntimeError:
+            # Widget might be deleted
+            pass
             
     def on_connect_result(self, success: bool):
         if success:
@@ -744,67 +765,99 @@ class CameraDetailUI(QMainWindow):
             self.video_display.set_offline_message()
     
     def closeEvent(self, event):
-        """Improved cleanup dengan threading safety"""
-        try:
-            # Stop timer terlebih dahulu
-            if hasattr(self, 'ui_update_timer') and self.ui_update_timer.isActive():
-                self.ui_update_timer.stop()
-
-            # Cleanup worker thread dengan aman
-            if getattr(self, "worker_thread", None) and self.worker_thread.isRunning():
-                self.worker_thread.quit()
-                self.worker_thread.wait(3000)  # Wait maksimal 3 detik
-                self.worker_thread = None
+        """Improved cleanup dengan threading safety dan proper order"""
+        if self._cleanup_done:
+            super().closeEvent(event)
+            return
             
-            # Cleanup frame processor
-            if getattr(self, "frame_processor", None):
+        self._is_closing = True
+        
+        try:
+            # 1. Stop UI updates first
+            if hasattr(self, 'ui_update_timer'):
+                self.ui_update_timer.stop()
+                self.ui_update_timer.deleteLater()
+                self.ui_update_timer = None
+
+            # 2. Disconnect camera signals early
+            if self.camera_instance and hasattr(self.camera_instance, 'thread'):
+                th = self.camera_instance.thread
+                if th:
+                    try:
+                        # Use blockSignals to prevent any pending signals
+                        th.blockSignals(True)
+                        
+                        # Disconnect all connections
+                        th.frame_received.disconnect()
+                        th.error_occurred.disconnect() 
+                        th.connection_changed.disconnect()
+                    except (TypeError, RuntimeError):
+                        pass
+
+            # 3. Stop worker thread
+            if self.worker_thread and self.worker_thread.isRunning():
+                # Block signals from frame processor
+                if self.frame_processor:
+                    self.frame_processor.blockSignals(True)
+                
+                self.worker_thread.quit()
+                if not self.worker_thread.wait(2000):
+                    self.worker_thread.terminate()
+                    self.worker_thread.wait(1000)
+                
+                self.worker_thread = None
+
+            # 4. Cleanup frame processor
+            if self.frame_processor:
                 try:
                     self.frame_processor.deleteLater()
                 except RuntimeError:
-                    pass  # C++ object sudah dihapus
+                    pass
                 self.frame_processor = None
 
-            # FIXED: Konsisten menggunakan camera_instance
-            if self.camera_instance and self.camera_instance.thread:
-                th = self.camera_instance.thread
-                # Disconnect signals untuk mencegah callback ke object yang sudah dihapus
-                try:
-                    th.frame_received.disconnect()
-                    th.error_occurred.disconnect()
-                    th.connection_changed.disconnect()
-                except TypeError:
-                    pass  # Signal sudah disconnect
-
-                # Stop thread dengan proper cleanup
-                if th.isRunning():
-                    th.stop()
-                    th.wait(2000)  # Wait maksimal 2 detik
-
-            # Cleanup camera instance
+            # 5. Stop camera streaming
             if self.camera_instance:
-                self.camera_instance.set_preview_mode(True)
-                self.camera_instance.disconnect()
+                try:
+                    # Stop streaming
+                    if hasattr(self.camera_instance, 'thread'):
+                        self.camera_instance.thread.stop()
+                    
+                    # Set preview mode
+                    self.camera_instance.set_preview_mode(True)
+                    
+                    # Disconnect
+                    self.camera_instance.disconnect()
+                except Exception:
+                    pass
+                
                 self.camera_instance = None
 
-            # Cleanup coverage logger
-            try:
-                if hasattr(self, 'coverage_logger'):
+            # 6. Flush coverage logger (non-blocking)
+            if hasattr(self, 'coverage_logger') and self.coverage_logger:
+                try:
                     self.coverage_logger.flush()
-                    self.coverage_logger.stop()
-            except Exception as e:
-                print(f"[CoverageLogger] gagal shutdown: {e}")
-            
-            # Show parent window
-            parent = self.parent()
-            if parent is not None:
-                parent.show()
-                if hasattr(parent, "_detail_window"):
-                    parent._detail_window = None
+                except Exception:
+                    pass
 
+            # 7. Notify parent window
+            if self.parent():
+                try:
+                    parent = self.parent()
+                    if hasattr(parent, 'resume_background_tasks'):
+                        parent.resume_background_tasks()
+                    if hasattr(parent, '_detail_window'):
+                        parent._detail_window = None
+                    parent.show()
+                except RuntimeError:
+                    pass
+
+            self._cleanup_done = True
+            
         except Exception as e:
-            print(f"Error during cleanup: {e}")
-        finally:
-            super().closeEvent(event)
+            import logging
+            logging.error(f"Error during cleanup: {e}")
+        
+        super().closeEvent(event)
 
 
 # Run the application

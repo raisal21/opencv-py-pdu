@@ -1,6 +1,9 @@
 /.venv/
 /resource/video_sample
 /__pycache__/
+/.pytest_cache
+/app/.pytest_cache
+/.mypy_cache/
 /dist
 /build
 /app/__pycache__/

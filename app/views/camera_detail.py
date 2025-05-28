@@ -3,8 +3,8 @@ import random
 import datetime
 import threading
 import numpy as np
-
-
+import json 
+import logging
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QLabel, QComboBox, QPushButton, 
                                QFrame, QSizePolicy, QGridLayout, QSpacerItem,
@@ -699,8 +699,14 @@ class CameraDetailUI(QMainWindow):
                                 "Could not get current frame from camera.")
             return
 
+        if self.frame_processor:
+            self.frame_processor.blockSignals(True)
+        
         dialog = ROISelectorDialog(current_frame, self)
         if not dialog.exec():
+            # TAMBAH: Resume if cancelled
+            if self.frame_processor:
+                self.frame_processor.blockSignals(False)
             return
 
         roi_points, _ = dialog.get_roi()
@@ -729,6 +735,9 @@ class CameraDetailUI(QMainWindow):
         )
         worker.signals.error.connect(lambda err: QMessageBox.critical(self, "DB Error", err))
         QThreadPool.globalInstance().start(worker)
+
+        if self.frame_processor:
+            self.frame_processor.blockSignals(False)
     
     def show_data_logs(self):
         cam_id = self.camera_data.get('id')
@@ -773,26 +782,14 @@ class CameraDetailUI(QMainWindow):
         self._is_closing = True
         
         try:
-            # 1. Stop UI updates first
-            if hasattr(self, 'ui_update_timer'):
-                self.ui_update_timer.stop()
-                self.ui_update_timer.deleteLater()
-                self.ui_update_timer = None
-
-            # 2. Disconnect camera signals early
-            if self.camera_instance and hasattr(self.camera_instance, 'thread'):
-                th = self.camera_instance.thread
-                if th:
-                    try:
-                        # Use blockSignals to prevent any pending signals
-                        th.blockSignals(True)
-                        
-                        # Disconnect all connections
-                        th.frame_received.disconnect()
-                        th.error_occurred.disconnect() 
-                        th.connection_changed.disconnect()
-                    except (TypeError, RuntimeError):
-                        pass
+            # 1. Stop camera thread FIRST (sebelum disconnect apapun)
+            if self.camera_instance:
+                if hasattr(self.camera_instance, 'thread') and self.camera_instance.thread:
+                    self.camera_instance.thread.stop()
+                    if not self.camera_instance.thread.wait(3000):  # 3 detik timeout
+                        import logging
+                        logging.warning("Camera thread failed to stop gracefully")
+                        # JANGAN terminate() - biarkan saja
 
             # 3. Stop worker thread
             if self.worker_thread and self.worker_thread.isRunning():
@@ -801,9 +798,11 @@ class CameraDetailUI(QMainWindow):
                     self.frame_processor.blockSignals(True)
                 
                 self.worker_thread.quit()
-                if not self.worker_thread.wait(2000):
-                    self.worker_thread.terminate()
-                    self.worker_thread.wait(1000)
+                # Wait longer and NEVER terminate
+                if not self.worker_thread.wait(5000):
+                    import logging
+                    logging.error("Worker thread failed to stop gracefully after 5s")
+                    # Do NOT terminate - let it finish naturally
                 
                 self.worker_thread = None
 

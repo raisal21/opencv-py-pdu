@@ -60,6 +60,7 @@ class Camera:
 
         self._roi_M:      np.ndarray | None = None 
         self._roi_size:   tuple[int, int] | None = None   
+        self._roi_mutex = QMutex()
         # Thread dan mutex
         self.mutex = QMutex()
         self.thread = None
@@ -131,8 +132,19 @@ class Camera:
                 import logging
                 logging.error(f"Koneksi gagal: {self.last_error}")
                 return False
+                if self.capture:
+                    self.capture.release()
+                    self.capture = None
+                self.last_error = "Gagal membuka koneksi kamera"
+                return False
                 
         except Exception as e:
+            if self.capture:
+                try:
+                    self.capture.release()
+                except:
+                    pass
+                self.capture = None
             self.connection_status = False
             self.last_error = str(e)
             logger.error(f"Error koneksi: {self.last_error}")
@@ -215,26 +227,6 @@ class Camera:
         
         return False
     
-    def _prepare_roi_transform(self, frame: np.ndarray):
-        """Hitung & cache matriks perspektif ROI sekali saja."""
-        # Konversi titik ke array float32
-        src_pts = np.array(self.roi_points, dtype=np.float32)
-
-        # Hitung lebar & tinggi seperti di ROISelector._extract_roi() :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
-        w1 = np.linalg.norm(src_pts[0] - src_pts[1])
-        w2 = np.linalg.norm(src_pts[2] - src_pts[3])
-        h1 = np.linalg.norm(src_pts[1] - src_pts[2])
-        h2 = np.linalg.norm(src_pts[3] - src_pts[0])
-        width  = int(max(w1, w2))
-        height = int(max(h1, h2))
-
-        dst_pts = np.array(
-            [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
-            dtype=np.float32
-        )
-
-        self._roi_M    = cv.getPerspectiveTransform(src_pts, dst_pts)
-        self._roi_size = (width, height)
     
     def _prepare_roi_transform(self, frame: np.ndarray) -> None:
         """
@@ -266,23 +258,22 @@ class Camera:
         self._roi_size = (width, height)
 
     def process_frame_with_roi(self, frame: np.ndarray) -> np.ndarray:
-        """Apply ROI warp jika sudah disetel dan transform tersedia."""
-        if (
-            frame is None
-            or self.roi_points is None
-            or len(self.roi_points) < 4
-        ):
+        if frame is None or self.roi_points is None or len(self.roi_points) < 4:
             return frame
-
-        # Hitung transform hanya pertama kali (atau setelah ROI di‑reset)
-        if self._roi_M is None:
-            self._prepare_roi_transform(frame)
-
-        # Fallback aman
-        if self._roi_M is None or self._roi_size is None:
-            return frame
-
-        return cv.warpPerspective(frame, self._roi_M, self._roi_size)
+        
+        with QMutexLocker(self._roi_mutex):  # <-- TAMBAH
+            if self._roi_M is None:
+                self._prepare_roi_transform(frame)
+            
+            if self._roi_M is None or self._roi_size is None:
+                return frame
+            
+            # Copy matrix untuk menghindari race saat warpPerspective
+            M_copy = self._roi_M.copy()
+            size_copy = self._roi_size
+        
+        # warpPerspective di LUAR mutex untuk performance
+        return cv.warpPerspective(frame, M_copy, size_copy)
 
     def set_roi(self, roi_points):
         """
@@ -299,9 +290,11 @@ class Camera:
                 self.roi_points = None
         else:   
             self.roi_points = roi_points
-        
-        self._roi_M   = None
-        self._roi_size = None
+
+        with QMutexLocker(self._roi_mutex):
+            self.roi_points = roi_points
+            self._roi_M = None
+            self._roi_size = None
     
     @staticmethod
     def from_dict(data):
@@ -393,6 +386,8 @@ class CameraThread(QThread):
         """
         self.running = True
         consecutive_errors = 0
+        frame_counter = 0  # TAMBAH INI
+        start_time = time.time()
         
         while self.running:
             try:
@@ -417,10 +412,21 @@ class CameraThread(QThread):
                             else:
                                 # Frame tidak berhasil dibaca
                                 consecutive_errors += 1
-                                if consecutive_errors >= 5:  # Batas error berturut-turut
+                                if consecutive_errors >= 5:
                                     self.camera.connection_status = False
                                     self.connection_changed.emit(False)
-                                    self.error_occurred.emit("Gagal membaca frame dari kamera")
+                                    
+                                    # TAMBAH: Cleanup VideoCapture on persistent errors
+                                    with QMutexLocker(self.camera.mutex):
+                                        if self.camera.capture:
+                                            try:
+                                                self.camera.capture.release()
+                                                self.camera.capture = None
+                                            except Exception as e:
+                                                logger.error(f"Failed to release capture: {e}")
+                                    
+                                    # TAMBAH: Exponential backoff untuk reconnect
+                                    self.camera.reconnect_interval = min(60, self.camera.reconnect_interval * 2)
                 else:
                     # Coba reconnect otomatis
                     if self.camera.try_reconnect():
@@ -448,12 +454,20 @@ class CameraThread(QThread):
             self.msleep(self.frame_interval)
     
     def stop(self):
-        """
-        Menghentikan thread dengan aman.
-        """
+        """Menghentikan thread dengan aman."""
         self.running = False
+        # TAMBAHAN: Ensure kita keluar dari capture.read()
+        if hasattr(self, 'camera') and self.camera.capture:
+            # Set timeout pendek untuk keluar dari blocking read
+            try:
+                self.camera.capture.set(cv.CAP_PROP_BUFFERSIZE, 0)
+            except:
+                pass
         self.quit()
-        self.wait()
+        # Pindahkan wait() ke sini, jangan di caller
+        if not self.wait(3000):
+            import logging
+            logging.error(f"Camera thread {self.camera.name} failed to stop")
 
 
 # Fungsi utilitas untuk konversi frame

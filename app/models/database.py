@@ -8,7 +8,6 @@ BASE_DIR = Path(os.getenv('LOCALAPPDATA', Path.home())) / 'EyeLog'
 BASE_DIR.mkdir(exist_ok=True)
 
 DB_PATH = BASE_DIR / 'eyelog_database.db'
-LOG_BASE = BASE_DIR / 'logs'
 
 class DatabaseManager:
     """

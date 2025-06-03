@@ -27,6 +27,13 @@ from utils.coverage_logger import CoverageLogger
 from utils.frame_processor import FrameProcessor
 from views.roi_window import ROISelectorDialog
 
+USE_NEW_STREAMING = True
+
+if USE_NEW_STREAMING:
+    from utils.stream_worker import StreamWorker, StreamState
+
+logger = logging.getLogger(__name__) 
+
 
 class VerticalBarGraph(QFrame):
     """Custom widget to display a vertical line graph for time-series data using QChart"""
@@ -520,9 +527,14 @@ class CameraDetailUI(QMainWindow):
         
         # Get the preset parameters
         preset_params = BG_PRESETS[preset_key]
-        
-        if self.frame_processor:
-            self.frame_processor.bg_subtractor = ForegroundExtraction(**preset_params)
+
+        if USE_NEW_STREAMING:
+            # For new implementation, we'll update in Phase 2
+            logger.info(f"Background preset change to {preset_key} (will be implemented in Phase 2)")
+        else:
+            # Old implementation
+            if self.frame_processor:
+                self.frame_processor.bg_subtractor = ForegroundExtraction(**preset_params)
             
         # Show confirmation message
         QMessageBox.information(
@@ -644,48 +656,90 @@ class CameraDetailUI(QMainWindow):
         self.init_material_detector()  
         self.video_display.set_connecting_message()
 
-        def _attempt_connect(retry_left=3):
-            if self.camera_instance.connect():
-                self.camera_instance.start_stream()
-                # FIXED: Gunakan camera_instance konsisten
-                self.camera_instance.set_preview_mode(False)
-                cam_thread = self.camera_instance.thread
-                
-                if not self.worker_thread:  # agar tak duplikat
-                    self.worker_thread = QThread(self)
-
-                    bg_params = BG_PRESETS["default"]
-                    contour_params = CONTOUR_PRESETS["standard"]
-
-                    self.frame_processor = FrameProcessor(
-                        self.camera_instance,  # FIXED: konsisten menggunakan camera_instance
-                        bg_params,
-                        contour_params
-                    )
-                    self.frame_processor.moveToThread(self.worker_thread)
-
-                    cam_thread.frame_received.connect(
-                        self.frame_processor.process, Qt.QueuedConnection
-                    )
-                    self.frame_processor.processed.connect(
-                        self.on_processed_frame, Qt.QueuedConnection
-                    )
-                    self.worker_thread.start()
+        if USE_NEW_STREAMING:
+            # NEW IMPLEMENTATION
+            self._init_camera_new()
+        else:
+            # OLD IMPLEMENTATION
+            def _attempt_connect(retry_left=3):
+                if self.camera_instance.connect():
+                    self.camera_instance.start_stream()
+                    # FIXED: Gunakan camera_instance konsisten
+                    self.camera_instance.set_preview_mode(False)
+                    cam_thread = self.camera_instance.thread
                     
-                cam_thread.error_occurred.connect(self.handle_camera_error)
-                cam_thread.connection_changed.connect(self.handle_connection_change)
-            elif retry_left > 0:
-                QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
-            else:
-                self.video_display.set_offline_message()
-                QMessageBox.warning(
-                    self, "Camera Connection Error",
-                    f"Failed to connect to camera: {self.camera_instance.last_error}"
-                )
+                    if not self.worker_thread:  # agar tak duplikat
+                        self.worker_thread = QThread(self)
+
+                        bg_params = BG_PRESETS["default"]
+                        contour_params = CONTOUR_PRESETS["standard"]
+
+                        self.frame_processor = FrameProcessor(
+                            self.camera_instance,  # FIXED: konsisten menggunakan camera_instance
+                            bg_params,
+                            contour_params
+                        )
+                        self.frame_processor.moveToThread(self.worker_thread)
+
+                        cam_thread.frame_received.connect(
+                            self.frame_processor.process, Qt.QueuedConnection
+                        )
+                        self.frame_processor.processed.connect(
+                            self.on_processed_frame, Qt.QueuedConnection
+                        )
+                        self.worker_thread.start()
+                        
+                    cam_thread.error_occurred.connect(self.handle_camera_error)
+                    cam_thread.connection_changed.connect(self.handle_connection_change)
+                elif retry_left > 0:
+                    QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
+                else:
+                    self.video_display.set_offline_message()
+                    QMessageBox.warning(
+                        self, "Camera Connection Error",
+                        f"Failed to connect to camera: {self.camera_instance.last_error}"
+                    )
+            
+            # panggil pertama kali 100 ms setelah UI siap
+            QTimer.singleShot(100, _attempt_connect)
+
+    def _init_camera_new(self):
+        """New StreamWorker implementation"""
+        logger.info("Using new StreamWorker implementation")
         
-        # panggil pertama kali 100 ms setelah UI siap
-        QTimer.singleShot(100, _attempt_connect)
+        # Create worker thread
+        bg_params = BG_PRESETS["default"]
+        contour_params = CONTOUR_PRESETS["standard"]
+        
+        self.stream_worker = StreamWorker(
+            self.camera_instance,
+            bg_params,
+            contour_params,
+            parent=self
+        )
+        
+        # Connect signals
+        self.stream_worker.frame_ready.connect(self.on_processed_frame, Qt.QueuedConnection)
+        self.stream_worker.error_occurred.connect(self.handle_camera_error, Qt.QueuedConnection)
+        self.stream_worker.connection_changed.connect(self.handle_connection_change, Qt.QueuedConnection)
+        self.stream_worker.state_changed.connect(self._on_state_changed, Qt.QueuedConnection)
+        
+        # Start worker
+        self.stream_worker.start()
     
+    @Slot(int)
+    def _on_state_changed(self, state: int):
+        """Handle StreamWorker state changes"""
+        if USE_NEW_STREAMING:
+            logger.info(f"Stream state changed: {StreamState(state).name}")
+            
+            if state == StreamState.RECONNECTING:
+                self.video_display.set_connecting_message()
+            elif state == StreamState.EDIT_ROI:
+                # Disable certain UI elements during ROI edit
+                self.bg_combo.setEnabled(False)
+                self.contour_combo.setEnabled(False)
+
     def edit_roi(self):
         """Open ROI selector dialog and update camera ROI points"""
         if not self.camera_instance:
@@ -699,14 +753,25 @@ class CameraDetailUI(QMainWindow):
                                 "Could not get current frame from camera.")
             return
 
-        if self.frame_processor:
-            self.frame_processor.blockSignals(True)
+        if USE_NEW_STREAMING:
+            # Pause the stream worker
+            if hasattr(self, 'stream_worker'):
+                self.stream_worker.enter_roi_edit()
+        else:
+            # Old implementation
+            if self.frame_processor:
+                self.frame_processor.blockSignals(True)
         
         dialog = ROISelectorDialog(current_frame, self)
         if not dialog.exec():
-            # TAMBAH: Resume if cancelled
-            if self.frame_processor:
-                self.frame_processor.blockSignals(False)
+            # Resume if cancelled
+            if USE_NEW_STREAMING:
+                if hasattr(self, 'stream_worker'):
+                    self.stream_worker.resume()
+            else:
+                # TAMBAH: Resume if cancelled
+                if self.frame_processor:
+                    self.frame_processor.blockSignals(False)
             return
 
         roi_points, _ = dialog.get_roi()
@@ -736,8 +801,12 @@ class CameraDetailUI(QMainWindow):
         worker.signals.error.connect(lambda err: QMessageBox.critical(self, "DB Error", err))
         QThreadPool.globalInstance().start(worker)
 
-        if self.frame_processor:
-            self.frame_processor.blockSignals(False)
+        if USE_NEW_STREAMING:
+            if hasattr(self, 'stream_worker'):
+                self.stream_worker.resume()
+        else:
+            if self.frame_processor:
+                self.frame_processor.blockSignals(False)
     
     def show_data_logs(self):
         cam_id = self.camera_data.get('id')
@@ -782,73 +851,81 @@ class CameraDetailUI(QMainWindow):
         self._is_closing = True
         
         try:
-            # 1. Stop camera thread FIRST (sebelum disconnect apapun)
-            if self.camera_instance:
-                if hasattr(self.camera_instance, 'thread') and self.camera_instance.thread:
-                    self.camera_instance.thread.stop()
-                    if not self.camera_instance.thread.wait(3000):  # 3 detik timeout
-                        import logging
-                        logging.warning("Camera thread failed to stop gracefully")
-                        # JANGAN terminate() - biarkan saja
-
-            # 3. Stop worker thread
-            if self.worker_thread and self.worker_thread.isRunning():
-                # Block signals from frame processor
-                if self.frame_processor:
-                    self.frame_processor.blockSignals(True)
-                
-                self.worker_thread.quit()
-                # Wait longer and NEVER terminate
-                if not self.worker_thread.wait(5000):
-                    import logging
-                    logging.error("Worker thread failed to stop gracefully after 5s")
-                    # Do NOT terminate - let it finish naturally
-                
-                self.worker_thread = None
-
-            # 4. Cleanup frame processor
-            if self.frame_processor:
-                try:
-                    self.frame_processor.deleteLater()
-                except RuntimeError:
-                    pass
-                self.frame_processor = None
-
-            # 5. Stop camera streaming
-            if self.camera_instance:
-                try:
-                    # Stop streaming
-                    if hasattr(self.camera_instance, 'thread'):
+            if USE_NEW_STREAMING:
+                # New implementation cleanup
+                if hasattr(self, 'stream_worker') and self.stream_worker.isRunning():
+                    logger.info("Stopping StreamWorker...")
+                    self.stream_worker.stop()
+            else:
+                # Old implementation cleanup (existing code)
+                # 1. Stop camera thread FIRST (sebelum disconnect apapun)
+                if self.camera_instance:
+                    if hasattr(self.camera_instance, 'thread') and self.camera_instance.thread:
                         self.camera_instance.thread.stop()
+                        if not self.camera_instance.thread.wait(3000):  # 3 detik timeout
+                            import logging
+                            logging.warning("Camera thread failed to stop gracefully")
+                            # JANGAN terminate() - biarkan saja
+
+                # 3. Stop worker thread
+                if self.worker_thread and self.worker_thread.isRunning():
+                    # Block signals from frame processor
+                    if self.frame_processor:
+                        self.frame_processor.blockSignals(True)
                     
-                    # Set preview mode
-                    self.camera_instance.set_preview_mode(True)
+                    self.worker_thread.quit()
+                    # Wait longer and NEVER terminate
+                    if not self.worker_thread.wait(5000):
+                        import logging
+                        logging.error("Worker thread failed to stop gracefully after 5s")
+                        # Do NOT terminate - let it finish naturally
                     
-                    # Disconnect
-                    self.camera_instance.disconnect()
-                except Exception:
-                    pass
-                
+                    self.worker_thread = None
+
+                # 4. Cleanup frame processor
+                if self.frame_processor:
+                    try:
+                        self.frame_processor.deleteLater()
+                    except RuntimeError:
+                        pass
+                    self.frame_processor = None
+
+                # 5. Stop camera streaming
+                if self.camera_instance:
+                    try:
+                        # Stop streaming
+                        if hasattr(self.camera_instance, 'thread'):
+                            self.camera_instance.thread.stop()
+                        
+                        # Set preview mode
+                        self.camera_instance.set_preview_mode(True)
+                        
+                        # Disconnect
+                        self.camera_instance.disconnect()
+                    except Exception:
+                        pass
+
                 self.camera_instance = None
 
-            # 6. Flush coverage logger (non-blocking)
-            if hasattr(self, 'coverage_logger') and self.coverage_logger:
-                try:
-                    self.coverage_logger.flush()
-                except Exception:
-                    pass
+                # 6. Flush coverage logger (non-blocking)
+                if hasattr(self, 'coverage_logger') and self.coverage_logger:
+                    try:
+                        self.coverage_logger.flush()
+                    except Exception:
+                        pass
 
-            # 7. Notify parent window
-            if self.parent():
-                try:
-                    parent = self.parent()
-                    if hasattr(parent, 'resume_background_tasks'):
-                        parent.resume_background_tasks()
-                    if hasattr(parent, '_detail_window'):
-                        parent._detail_window = None
-                    parent.show()
-                except RuntimeError:
-                    pass
+                # 7. Notify parent window
+                if self.parent():
+                    try:
+                        parent = self.parent()
+                        if hasattr(parent, 'resume_background_tasks'):
+                            parent.resume_background_tasks()
+                        if hasattr(parent, '_detail_window'):
+                            parent._detail_window = None
+                        parent.show()
+                    except RuntimeError:
+                        pass
+                pass
 
             self._cleanup_done = True
             

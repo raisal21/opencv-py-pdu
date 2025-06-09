@@ -604,7 +604,7 @@ class CameraDetailUI(QMainWindow):
         self.camera_instance = Camera.from_dict(self.camera_data)
         
         if self.camera_data.get('roi_points'):
-            self.camera_instance.roi_points = self.camera_data['roi_points']
+            self.camera_instance.set_roi(self.camera_data['roi_points'])
 
         self.video_display.set_connecting_message()
         self._init_camera_new()
@@ -680,7 +680,7 @@ class CameraDetailUI(QMainWindow):
             return
 
         # simpan di objek kamera
-        self.camera_instance.roi_points = roi_points
+        self.camera_instance.set_roi(roi_points)
         self.camera_data['roi_points'] = roi_points
 
         # konversi ke JSON

@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 from utils.material_detector import ForegroundExtraction, ContourProcessor
 from PySide6.QtCore import (
     QThread, Signal, QMutex, QMutexLocker, QWaitCondition,
-    QMetaObject, Qt, Slot, QTimer, Q_ARG
+    Qt, Slot, QTimer
 )
 
 logger = logging.getLogger(__name__)
@@ -186,23 +186,23 @@ class StreamWorker(QThread):
         if self._is_stopping():
             if self._timer and self._timer.isActive():
                 self._timer.stop()
-            self.quit() # Hentikan event loop
+            self.quit()
             return
 
-        # new_roi_points = None
-        # with QMutexLocker(self._restart_mutex):
-        #     if self._pending_roi_restart is not None:
-        #         new_roi_points = self._pending_roi_restart
-        #         self._pending_roi_restart = None
+        new_roi_points = None
+        with QMutexLocker(self._restart_mutex):
+            if self._pending_roi_restart is not None:
+                new_roi_points = self._pending_roi_restart
+                self._pending_roi_restart = None
         
-        # if new_roi_points is not None:
-        #     logger.info("Restarting stream due to ROI change.")
-        #     self.camera.roi_points = new_roi_points
-        #     self._cleanup_capture()  # Hancurkan koneksi lama
-        #     self.set_state(StreamState.RUNNING) # Pastikan state kembali running
-        #     # Loop akan otomatis mencoba menyambung ulang karena self._capture sekarang None
-        #     self.msleep(100) # Beri jeda singkat sebelum mencoba lagi
-        #     return
+        if new_roi_points is not None:
+            logger.info("Restarting stream due to ROI change.")
+            self.camera.roi_points = new_roi_points
+            self._cleanup_capture()  # Hancurkan koneksi lama
+            self.set_state(StreamState.RUNNING) # Pastikan state kembali running
+            # Loop akan otomatis mencoba menyambung ulang karena self._capture sekarang None
+            self.msleep(100) # Beri jeda singkat sebelum mencoba lagi
+            return
 
         state = self.state
         if state != StreamState.RUNNING:
@@ -307,7 +307,10 @@ class StreamWorker(QThread):
             # LANGKAH 3: Perbarui konfigurasi dan cleanup koneksi lama.
             logger.info("Updating camera config and cleaning up old connection.")
             if hasattr(self, 'camera') and self.camera:
-                self.camera.roi_points = roi_points
+                if hasattr(self.camera, 'set_roi'):
+                    self.camera.set_roi(roi_points)
+                else:
+                    self.camera.roi_points = roi_points
             self._cleanup_capture()
 
             # LANGKAH 4: Coba sambung ulang secara langsung di sini.
@@ -331,14 +334,10 @@ class StreamWorker(QThread):
         Secara thread-safe meminta worker untuk me-restart stream dengan ROI baru.
         Menggunakan QMetaObject.invokeMethod untuk menjamin eksekusi yang aman.
         """
-        logger.info("Requesting stream restart for new ROI via invokeMethod.")
-        points_json = json.dumps(points)
-        QMetaObject.invokeMethod(
-            self,
-            "_restart_stream_internal",
-            Qt.QueuedConnection,
-            Q_ARG(str, points_json)
-        )
+        """Request ROI restart in a thread-safe manner."""
+        logger.info("Queueing ROI restart request.")
+        with QMutexLocker(self._restart_mutex):
+            self._pending_roi_restart = points
 
     def _initialize_processors(self):
         logger.info("Initializing processors (Phase 2)")

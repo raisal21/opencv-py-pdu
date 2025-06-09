@@ -148,6 +148,7 @@ class CameraItem(QFrame):
         self.preview_widget.setFixedSize(160, 90)  # Rasio 16:9
         self.preview_widget.setAlignment(Qt.AlignCenter)
         self.preview_widget.setStyleSheet("background-color: #1C1C1F; border-radius: 4px;")
+        self.preview_widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         
         # Set gambar preview jika ada
         if preview_image:
@@ -173,6 +174,7 @@ class CameraItem(QFrame):
         
         name_label = QLabel(camera_name)
         name_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #E4E4E7; border: 0px;")
+        name_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         
         # Tampilkan RTSP URL
         url_display = self.url if self.url else "[No URL Set]"
@@ -182,11 +184,13 @@ class CameraItem(QFrame):
         
         ip_label = QLabel(f"URL: {url_display}")
         ip_label.setStyleSheet("font-size: 14px; color: #E4E4E7; border: 0px;")
+        ip_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         
         status_color = "#4CAF50" if is_online else "#9CA3AF"
         status_text = "Online" if is_online else "Offline"
         self.status_label = QLabel(f"Status: {status_text}")
         self.status_label.setStyleSheet(f"font-size: 14px; color: {status_color}; border: 0px;")
+        self.status_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         
         info_layout.addWidget(name_label)
         info_layout.addWidget(ip_label)

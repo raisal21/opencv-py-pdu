@@ -103,9 +103,8 @@ class CoverageLogger:
             self._logger.flush()
             if callable(self._finished_cb):
                 # Pastikan callback dieksekusi di GUI thread
-                QMetaObject.invokeMethod(
-                    self._finished_cb, "__call__", Qt.QueuedConnection
-                )
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, self._finished_cb)
 
     def flush_async(self, finished_cb=None):
         """
@@ -115,7 +114,7 @@ class CoverageLogger:
         finished_cb : fungsi | lambda | None
             Dipanggil di GUI thread setelah semua antrian kosong.
         """
-        runner = _FlushRunner(self, finished_cb)
+        runner = self._FlushRunner(self, finished_cb)
         QThreadPool.globalInstance().start(runner)
 
     def _get_camera_dir(self, camera_id):

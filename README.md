@@ -13,8 +13,8 @@
 - **Python 3.12**
 - **PySide6**
 - **OpenCV**
-- **SQLite** untuk penyimpanan data
-- **Matplotlib** untuk visualisasi
+- **SQLite**
+- **Matplotlib**
 
 ## 📂 Struktur Proyek
 

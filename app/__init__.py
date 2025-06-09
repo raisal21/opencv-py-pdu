@@ -3,7 +3,7 @@ import platform
 import os
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QFontDatabase, QFont
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import QThreadPool, QTimer
 
 # Platform specific settings BEFORE any imports
 if platform.system() == "Windows":
@@ -113,10 +113,11 @@ if __name__ == "__main__":
         from main_window import MainWindow
         
         window = MainWindow()
-        window.show()
-        splash.finish(window)
-        
-        # Start the event loop
+        def show_main_window():
+            window.show()
+            splash.finish(window)
+
+        QTimer.singleShot(2000, show_main_window)
         sys.exit(app.exec())
         
     except Exception as e:

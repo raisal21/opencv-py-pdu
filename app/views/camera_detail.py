@@ -795,6 +795,14 @@ class CameraDetailUI(QMainWindow):
             self.stream_worker.deleteLater()
             self.stream_worker = None # Hapus referensi internal
             logger.info("StreamWorker stopped and scheduled for deletion.")
+            
+        if hasattr(self, "coverage_logger") and self.coverage_logger:
+            try:
+                self.coverage_logger.flush()
+                self.coverage_logger.stop()
+                gc.collect()
+            except Exception as e:
+                logger.warning(f"Failed stopping CoverageLogger: {e}")
 
         # 4. Setelah semua thread berhenti, baru tampilkan kembali parent
         parent = self.parent()
@@ -808,13 +816,6 @@ class CameraDetailUI(QMainWindow):
             except RuntimeError:
                 logger.warning("Parent widget was already deleted.")
 
-        if hasattr(self, "coverage_logger") and self.coverage_logger:
-            try:
-                self.coverage_logger.flush()
-                self.coverage_logger.stop()
-                gc.collect()
-            except Exception as e:
-                logger.warning(f"Failed stopping CoverageLogger: {e}")
 
         # Tandai cleanup selesai
         self._cleanup_done = True

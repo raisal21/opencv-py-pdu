@@ -414,12 +414,12 @@ class CameraDetailUI(QMainWindow):
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
         
-        edit_roi_button = QPushButton("Edit ROI")
-        edit_roi_button.setIcon(QIcon(resource_path("assets/icons/edit.png")))
-        edit_roi_button.setIconSize(QSize(18, 18))
-        edit_roi_button.setMinimumHeight(35)
-        edit_roi_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        edit_roi_button.setStyleSheet("""
+        self.edit_roi_button = QPushButton("Edit ROI")
+        self.edit_roi_button.setIcon(QIcon(resource_path("assets/icons/edit.png")))
+        self.edit_roi_button.setIconSize(QSize(18, 18))
+        self.edit_roi_button.setMinimumHeight(35)
+        self.edit_roi_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.edit_roi_button.setStyleSheet("""
             QPushButton {
                 background-color: #A1A1AA;
                 color: white;
@@ -430,9 +430,9 @@ class CameraDetailUI(QMainWindow):
                 background-color: #EA580C;
             }
         """)
-        edit_roi_button.clicked.connect(self.edit_roi)
-        button_row.addWidget(edit_roi_button, 1)
-        
+        self.edit_roi_button.clicked.connect(self.edit_roi)
+        button_row.addWidget(self.edit_roi_button, 1)
+
         data_logs_button = QPushButton("Logs Folder")
         data_logs_button.setIcon(QIcon(resource_path("assets/icons/logs.png")))
         data_logs_button.setIconSize(QSize(18, 18))
@@ -647,12 +647,18 @@ class CameraDetailUI(QMainWindow):
             # Disable certain UI elements during ROI edit
             self.bg_combo.setEnabled(False)
             self.contour_combo.setEnabled(False)
+            if hasattr(self, 'edit_roi_button'):
+                self.edit_roi_button.setEnabled(False)
         elif state == StreamState.UPDATING_PRESETS:
             self.bg_combo.setEnabled(False)
             self.contour_combo.setEnabled(False)
+            if hasattr(self, 'edit_roi_button'):
+                self.edit_roi_button.setEnabled(False)
         elif state in (StreamState.RUNNING, StreamState.PAUSED):
-            self.bg_combo.setEnabled(True)
-            self.contour_combo.setEnabled(True)
+            QTimer.singleShot(1000, lambda: self.bg_combo.setEnabled(True))
+            QTimer.singleShot(1000, lambda: self.contour_combo.setEnabled(True))
+            if hasattr(self, 'edit_roi_button'):
+                QTimer.singleShot(1000, lambda: self.edit_roi_button.setEnabled(True))
 
     def edit_roi(self):
         """Open ROI selector dialog and update camera ROI points"""

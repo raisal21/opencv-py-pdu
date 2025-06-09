@@ -9,6 +9,7 @@ import logging
 import platform
 import threading
 import json
+import gc
 from enum import IntEnum
 from typing import Optional, Tuple
 from utils.material_detector import ForegroundExtraction, ContourProcessor
@@ -341,6 +342,12 @@ class StreamWorker(QThread):
 
     def _initialize_processors(self):
         logger.info("Initializing processors (Phase 2)")
+        if self.bg_subtractor is not None:
+            self.bg_subtractor = None
+        if self.contour_processor is not None:
+            self.contour_processor = None
+        gc.collect()
+        
         self.bg_subtractor = ForegroundExtraction(**self.bg_params)
         self.contour_processor = ContourProcessor(**self.contour_params)
     

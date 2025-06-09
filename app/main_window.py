@@ -10,15 +10,15 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QLabel, QPushButton, QFrame, QScrollArea, QSizePolicy, 
                               QMessageBox, QDialog)
 from shiboken6 import isValid
-from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QThread, QThreadPool
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QThread, QThreadPool, Slot
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap
 
 from resources import resource_path
 from models.camera import Camera, convert_cv_to_pixmap, CameraThread
-from models.database import DatabaseManager
 from views.add_camera import AddCameraDialog
+from views.camera_detail import CameraDetailUI
 from utils.log import setup as setup_log
-from utils.db_worker import DBWorker
+from utils.db_worker import DBWorker, DBSignals
 from utils.ping_scheduler import PingWorker
 from utils.preview_scheduler import SnapshotWorker, PreviewScheduler
 
@@ -319,22 +319,15 @@ class CameraList(QWidget):
     
     # Signal untuk navigasi ke detail kamera
     open_camera_detail = Signal(int)  # Emit camera_id untuk dibuka
-    
-    def __init__(self, db_manager, parent=None):
+
+    def __init__(self, error_handler, parent=None):
         super().__init__(parent)
-        
-        # Database manager
-        self.db_manager = db_manager
-        self.db_pool = QThreadPool.globalInstance()
-        self.db_pool.setMaxThreadCount(2)
-        
-        # Dictionary untuk menyimpan instance kamera aktif
+        self.error_handler = error_handler
         self.active_cameras = {}
         self.snapshot_done = set()
 
         self.ping_pool   = QThreadPool.globalInstance()
-        self.ping_pool.setMaxThreadCount(2
-        )
+        self.ping_pool.setMaxThreadCount(2)
         self.ping_timer  = QTimer(self)
         self.ping_timer.timeout.connect(self._refresh_statuses)
         self.ping_timer.start(30000)
@@ -423,27 +416,31 @@ class CameraList(QWidget):
         self.load_cameras()
     
     def load_cameras(self):
-        """Memuat daftar kamera dari database"""
-        # Bersihkan layout terlebih dahulu
+        """Memuat daftar kamera dari database secara asinkron."""
+        # Membersihkan layout terlebih dahulu (logika Anda tetap sama)
         while self.cameras_layout.count():
             item = self.cameras_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        if (not hasattr(self, "empty_label")) or (not isValid(self.empty_label)):
+        # Logika untuk menampilkan pesan "No cameras found" tetap sama
+        if (not hasattr(self, "empty_label")) or (not self.empty_label.parent()): # Cek validitas
             self.empty_label = QLabel(
                 "No cameras found. Click 'Add Camera' to get started.",
                 self.cameras_container
             )
             self.empty_label.setAlignment(Qt.AlignCenter)
             self.cameras_layout.addWidget(self.empty_label)
-
+        
         self.empty_label.setVisible(True)
 
-        worker = DBWorker("get_all_cameras")
-        worker.signals.finished.connect(self._populate_camera_list)   # method baru
-        worker.signals.error.connect(lambda err: print("[DB]", err))
-        self.db_pool.start(worker)  
+        signals = DBSignals()
+        signals.finished.connect(self._populate_camera_list)
+        signals.error.connect(self.error_handler)
+
+        # PEMANGGILAN BENAR: Gunakan worker untuk get_all_cameras
+        worker = DBWorker(signals, "get_all_cameras")
+        QThreadPool.globalInstance().start(worker)
 
     def _populate_camera_list(self, cameras):
         """Populate camera list dan trigger initial snapshots"""
@@ -516,21 +513,29 @@ class CameraList(QWidget):
         self.empty_label.setVisible(True)
     
     def add_camera(self, name, ip_address, port, protocol="RTSP", username="",
-                   password="", stream_path="", url="", roi_points=None):
-        worker = DBWorker(
-            "add_camera",
-            name, ip_address, port, protocol, username, password,
-            stream_path, url, roi_points=roi_points
-        )
-        worker.signals.finished.connect(
+                password="", stream_path="", url="", roi_points=None):
+        """Menambahkan kamera baru ke database secara asinkron."""
+        # Pola baru yang aman untuk worker
+        signals = DBSignals()
+        signals.finished.connect(
             lambda cam_id: self._on_camera_added(
                 cam_id, name, ip_address, port, protocol,
                 username, password, stream_path, url, roi_points
             )
         )
-        worker.signals.error.connect(self._db_error_msg)
-        self.db_pool.start(worker)
-        return True   # operasi asinkron, tapi biar MainWindow tahu request diterima
+        signals.error.connect(self.window()._db_error_msg)
+
+        # Buat worker dengan memberikan objek sinyal
+        worker = DBWorker(
+            signals,
+            "add_camera",
+            name, ip_address, port, protocol, username, password,
+            stream_path, url, roi_points=roi_points
+        )
+        
+        # Jalankan di thread pool global
+        QThreadPool.globalInstance().start(worker)
+        return True
 
     def _on_camera_added(self, camera_id, name, ip_address, port, protocol,
                          username, password, stream_path, url, roi_points):
@@ -568,8 +573,20 @@ class CameraList(QWidget):
         self._request_initial_snapshot(camera_id)
     
     def edit_camera(self, camera_id):
-        camera_data = self.db_manager.get_camera(camera_id)
+        """Langkah 1: Mengambil data kamera yang akan diedit secara asinkron."""
+        signals = DBSignals()
+        signals.finished.connect(self._on_edit_camera_data_loaded)
+        signals.error.connect(self.window()._db_error_msg)
+
+        # PEMANGGILAN BENAR: Gunakan worker untuk mengambil data sebelum membuka dialog edit
+        worker = DBWorker(signals, "get_camera", camera_id)
+        QThreadPool.globalInstance().start(worker)
+
+    @Slot(dict)
+    def _on_edit_camera_data_loaded(self, camera_data):
+        """Langkah 2: Membuka dialog edit setelah data kamera berhasil diambil."""
         if not camera_data:
+            QMessageBox.warning(self, "Error", "Camera data not found.")
             return
 
         dialog = AddCameraDialog(self.window(), camera_data)
@@ -577,24 +594,20 @@ class CameraList(QWidget):
             return
 
         updated = dialog.get_camera_data()
+        
+        # Langkah 3: Menjalankan worker untuk memperbarui data di database
+        update_signals = DBSignals()
+        update_signals.finished.connect(lambda ok: self._on_camera_updated(ok, updated))
+        update_signals.error.connect(self.window()._db_error_msg)
 
+        # PEMANGGILAN BENAR: Gunakan worker untuk update_camera
         worker = DBWorker(
-            "update_camera",
-            camera_id,
-            updated['name'],
-            updated['ip_address'],
-            updated['port'],
-            updated['protocol'],
-            updated['username'],
-            updated['password'],
-            updated['stream_path'],
-            updated['url']
+            update_signals, "update_camera",
+            camera_data['id'], updated['name'], updated['ip_address'], updated['port'],
+            updated['protocol'], updated['username'], updated['password'],
+            updated['stream_path'], updated['url']
         )
-        worker.signals.finished.connect(
-            lambda ok: self._on_camera_updated(ok, updated)
-        )
-        worker.signals.error.connect(self._db_error_msg)
-        self.db_pool.start(worker)
+        QThreadPool.globalInstance().start(worker)
 
     def _on_camera_updated(self, success, updated):
         if success:
@@ -609,46 +622,33 @@ class CameraList(QWidget):
                 "Failed to update camera. Please try again."
             )
 
-    def _db_error_msg(self, msg):
-        QMessageBox.critical(self, "Database Error", msg)
-
     def delete_camera(self, camera_id):
-        """Handler untuk menghapus kamera (non‑blocking)."""
-
-        camera_data = self.db_manager.get_camera(camera_id)
-        if not camera_data:
-            return
-
-        # dialog konfirmasi
-        dialog = DeleteCameraDialog(camera_data['name'], self.window())
-        if not dialog.exec():
-            return
-
-        # jalankan DELETE di thread‑pool
-        worker = DBWorker("delete_camera", camera_id)
-        worker.signals.finished.connect(
-            lambda ok: self._on_camera_deleted(ok, camera_data['name'], camera_id)
-        )
-        worker.signals.error.connect(self._db_error_msg)
+        """Langkah 1: Mengambil data kamera untuk ditampilkan di dialog konfirmasi."""
+        signals = DBSignals()
+        signals.finished.connect(self._on_delete_camera_data_loaded)
+        signals.error.connect(self.window()._db_error_msg)
+        
+        # PEMANGGILAN BENAR: Gunakan worker untuk mengambil data sebelum konfirmasi hapus
+        worker = DBWorker(signals, "get_camera", camera_id)
         QThreadPool.globalInstance().start(worker)
 
+    @Slot(dict)
+    def _on_delete_camera_data_loaded(self, camera_data):
+        """Langkah 2: Menampilkan dialog konfirmasi setelah data kamera didapat."""
+        if not camera_data: return
 
-    def _on_camera_deleted(self, success: bool, name: str, camera_id: int):
-        """Cleanup saat camera dihapus"""
-        if not success:
-            QMessageBox.warning(self.window(), "Delete Failed",
-                                "Failed to delete camera. Please try again.")
-            return
-
-        # Cleanup tracking
-        self.active_cameras.pop(camera_id, None)
-        self.snapshot_done.discard(camera_id)  # Remove dari set
+        dialog = DeleteCameraDialog(camera_data['name'], self.window())
+        if not dialog.exec(): return
+            
+        # Langkah 3: Menjalankan worker untuk menghapus kamera
+        delete_signals = DBSignals()
+        delete_signals.finished.connect(lambda ok: self._on_camera_deleted(ok, camera_data['name'], camera_data['id']))
+        delete_signals.error.connect(self.error_handler)
         
-        self.load_cameras()
+        # PEMANGGILAN BENAR: Gunakan worker untuk delete_camera
+        worker = DBWorker(delete_signals, "delete_camera", camera_data['id'])
+        QThreadPool.globalInstance().start(worker)
         
-        QMessageBox.information(self.window(), "Camera Deleted",
-                                f"Camera '{name}' has been deleted.")
-    
     def _refresh_previews(self):
         """
         Optional: Update preview HANYA untuk cameras yang sedang streaming.
@@ -738,12 +738,6 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        
-        # Inisialisasi database manager
-        self.db_manager = DatabaseManager()
-        self.db_pool    = QThreadPool.globalInstance()
-        self.db_pool.setMaxThreadCount(2) 
-        
         # Setup UI
         self.setup_ui()
         
@@ -876,7 +870,7 @@ class MainWindow(QMainWindow):
         navbar_layout.addWidget(self.add_camera_button)
         
         # Camera list widget
-        self.camera_list = CameraList(self.db_manager)
+        self.camera_list = CameraList(error_handler=self._db_error_msg, parent=self)
         self.camera_list.open_camera_detail.connect(self.open_camera_detail)
         
         # Add widgets to main layout
@@ -912,10 +906,13 @@ class MainWindow(QMainWindow):
         )
 
     def update_status_bar(self):
-        """Update status bar dengan jumlah kamera terhubung"""
-        cameras = self.db_manager.get_all_cameras()
-        camera_count = len(cameras)
-        self.statusBar().showMessage(f"{camera_count} Cameras Connected | Database: Connected")
+        """Memperbarui status bar dengan jumlah kamera secara asinkron."""
+        signals = DBSignals()
+        signals.finished.connect(lambda cameras: self.statusBar().showMessage(f"{len(cameras)} Cameras Connected | Database: Connected"))
+        signals.error.connect(self._db_error_msg)
+        
+        worker = DBWorker(signals, "get_all_cameras")
+        QThreadPool.globalInstance().start(worker)
 
     def pause_background_tasks(self):
         """Pause all background tasks when camera detail is opened"""
@@ -948,65 +945,46 @@ class MainWindow(QMainWindow):
         dialog = AddCameraDialog(self)
         
         if dialog.exec():
-            # Tambahkan kamera baru
             camera_data = dialog.get_camera_data()
-            camera_id = self.camera_list.add_camera(
-                camera_data['name'],
-                camera_data['ip_address'],
-                camera_data['port'],
-                camera_data['protocol'],
-                camera_data['username'],
-                camera_data['password'],
-                camera_data['stream_path'],
-                camera_data['url'],
-                roi_points=camera_data.get('roi_points'),
+            # Panggil metode di CameraList untuk menangani penambahan
+            self.camera_list.add_camera(
+                camera_data['name'], camera_data['ip_address'], camera_data['port'],
+                camera_data['protocol'], camera_data['username'], camera_data['password'],
+                camera_data['stream_path'], camera_data['url'],
+                roi_points=camera_data.get('roi_points')
             )
-            
-            if camera_id:
-                # Update status bar
-                self.update_status_bar()
-                
-                # Tampilkan pesan sukses
-                QMessageBox.information(
-                    self,
-                    "Camera Added",
-                    f"Camera '{camera_data['name']}' has been added successfully."
-                )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Add Failed",
-                    "Failed to add camera. Please try again."
-                )
     
     def open_camera_detail(self, camera_id):
-        """Buka halaman detail kamera dengan timer management"""
-        # Ambil data kamera dari database
-        camera_data = self.db_manager.get_camera(camera_id)
+        """Membuka halaman detail kamera, mengambil data secara asinkron."""
         
-        if camera_data:
-            # Pause background tasks BEFORE opening camera detail
-            self.pause_background_tasks()
-            
-            from views.camera_detail import CameraDetailUI
-            camera_detail = CameraDetailUI(camera_data, parent=self)
-            
-            # Store reference for cleanup
-            self._detail_window = camera_detail
-            
-            # Connect to destroyed signal to resume tasks
-            camera_detail.destroyed.connect(self.resume_background_tasks)
-            
-            # Hide main window and show camera detail
-            self.hide()
-            camera_detail.init_camera()
-            camera_detail.show()
-        else:
-            QMessageBox.warning(
-                self,
-                "Camera Not Found",
-                f"Camera with ID {camera_id} not found."
-            )
+        # Mengambil data kamera menggunakan worker
+        signals = DBSignals()
+        
+        # Setelah data diterima, buka jendela detail
+        @Slot(dict)
+        def _on_data_received(camera_data):
+            if camera_data:
+                self.pause_background_tasks()
+                
+                detail_window = CameraDetailUI(camera_data, parent=self)
+                detail_window.destroyed.connect(self.resume_background_tasks)
+                
+                self.hide()
+                detail_window.show()
+            else:
+                QMessageBox.warning(self, "Camera Not Found", f"Camera with ID {camera_id} not found.")
+
+        signals.finished.connect(_on_data_received)
+        signals.error.connect(self._db_error_msg)
+        
+        worker = DBWorker(signals, "get_camera", camera_id)
+        QThreadPool.globalInstance().start(worker)
+
+    @Slot(str)
+    def _db_error_msg(self, error_message: str):
+        """Menampilkan pesan error dari database secara terpusat."""
+        logger.error(f"Database operation failed: {error_message}")
+        QMessageBox.critical(self, "Database Error", error_message)
     
     def closeEvent(self, event):
         """Cleanup saat aplikasi ditutup"""

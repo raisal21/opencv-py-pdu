@@ -65,6 +65,11 @@ if __name__ == "__main__":
     
     # Create the application FIRST
     app = QApplication(sys.argv)
+
+    from splash_screen import SplashScreen
+    splash = SplashScreen()
+    splash.show()
+    app.processEvents()
     
     # NOW configure thread pool and other Qt-dependent settings
     if platform.system() == "Windows":
@@ -109,12 +114,13 @@ if __name__ == "__main__":
         
         window = MainWindow()
         window.show()
+        splash.finish(window)
         
         # Start the event loop
         sys.exit(app.exec())
         
     except Exception as e:
         import traceback
-        logging.error(f"Failed to start application: {e}")
+        print(f"Failed to start application: {e}")
         traceback.print_exc()
         sys.exit(1)

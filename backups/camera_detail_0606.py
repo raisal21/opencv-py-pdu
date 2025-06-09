@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QComboBox, QPushButton, 
                                QFrame, QSizePolicy, QGridLayout, QSpacerItem,
                                QMessageBox)
-from PySide6.QtCore import Qt, QThread, QSize, QRect, QTimer, QPropertyAnimation, QDateTime, QPointF, QMarginsF, QMargins, Slot, QUrl, QThreadPool
+from PySide6.QtCore import Qt, QThread, QSize, QRect, QTimer, QPropertyAnimation, QDateTime, QPointF, QMarginsF, QMargins, Slot, QUrl
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QLinearGradient, QCursor, QIcon, QDesktopServices
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 from resources import resource_path
@@ -17,13 +17,20 @@ from models.camera import Camera, convert_cv_to_pixmap
 
 # Import material detector classes
 from utils.material_detector import (
+    ForegroundExtraction, 
+    ContourProcessor, 
     BG_PRESETS, 
     CONTOUR_PRESETS
 )
+from models.database import DatabaseManager
 from utils.coverage_logger import CoverageLogger
+from utils.frame_processor import FrameProcessor
 from views.roi_window import ROISelectorDialog
-from utils.stream_worker import StreamWorker, StreamState
-from utils.db_worker import DBWorker, DBSignals
+
+USE_NEW_STREAMING = True
+
+if USE_NEW_STREAMING:
+    from utils.stream_worker import StreamWorker, StreamState
 
 logger = logging.getLogger(__name__) 
 
@@ -254,10 +261,15 @@ class CameraDetailUI(QMainWindow):
 
         self.worker_thread: QThread | None = None
         self.frame_processor: FrameProcessor | None = None
+
+        # Initialize material detector components
+        self.bg_subtractor = None
+        self.contour_processor = None
         
         # Current metrics storage - will be updated with frames but only displayed every 5 seconds
         self.current_coverage_percent = 0
         self.current_metrics = None
+        self._last_frame = None
         
         # History data for graph with timestamps
         current_time = datetime.datetime.now()
@@ -398,6 +410,9 @@ class CameraDetailUI(QMainWindow):
                 background-color: #EA580C;
             }
         """)
+        reset_button.setFixedSize(QSize(200, 35))
+        reset_button.clicked.connect(self.reset_background)
+        button_layout.addWidget(reset_button)
         
         button_layout.addItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
         detection_layout.addLayout(button_layout)
@@ -482,6 +497,9 @@ class CameraDetailUI(QMainWindow):
         
         # Initialize camera and material detection
         self.init_camera()
+
+        # Initialize the database manager and coverage logger
+        self.db_manager = DatabaseManager()
         self.coverage_logger = CoverageLogger()
         
         # Setup UI update timer - moderate frequency
@@ -489,6 +507,16 @@ class CameraDetailUI(QMainWindow):
         self.ui_update_timer.timeout.connect(self.update_coverage_display)
         self.ui_update_timer.start(5000)  # 5000 ms = 5 seconds
         
+    
+    def init_material_detector(self):
+        """Initialize the material detector components with default presets"""
+        # Initialize with default preset
+        default_bg_preset = BG_PRESETS["default"]
+        self.bg_subtractor = ForegroundExtraction(**default_bg_preset)
+        
+        # Initialize with standard contour preset
+        standard_contour_preset = CONTOUR_PRESETS["standard"]
+        self.contour_processor = ContourProcessor(**standard_contour_preset)
     
     def update_background_preset(self, index):
         """Update background subtraction parameters based on selected preset"""
@@ -501,7 +529,12 @@ class CameraDetailUI(QMainWindow):
         # Get the preset parameters
         preset_params = BG_PRESETS[preset_key]
 
-        self.stream_worker.set_bg_params(preset_params)
+        if USE_NEW_STREAMING and hasattr(self, "stream_worker"):
+            self.stream_worker.set_bg_params(preset_params)
+        else:
+            # Old implementation
+            if self.frame_processor:
+                self.frame_processor.bg_subtractor = ForegroundExtraction(**preset_params)
             
         # Show confirmation message
         QMessageBox.information(
@@ -512,7 +545,7 @@ class CameraDetailUI(QMainWindow):
     
     def update_contour_preset(self, index):
         """Update contour processing parameters based on selected preset"""
-        if index < 0 or index >= len(self.contour_preset_keys):
+        if not self.contour_processor or index < 0 or index >= len(self.contour_preset_keys):
             return
             
         # Get the preset key from the index
@@ -521,7 +554,13 @@ class CameraDetailUI(QMainWindow):
         # Get the preset parameters
         preset_params = CONTOUR_PRESETS[preset_key]
 
-        self.stream_worker.set_contour_params(preset_params)
+        if USE_NEW_STREAMING and hasattr(self, "stream_worker"):
+            self.stream_worker.set_contour_params(preset_params)
+        else:
+            # Old implementation
+            # Update the contour processor in the frame processor
+            if self.frame_processor:
+                self.frame_processor.contour_proc = ContourProcessor(**preset_params)
             
         # Show confirmation message
         QMessageBox.information(
@@ -530,11 +569,25 @@ class CameraDetailUI(QMainWindow):
             f"Contour preset '{self.contour_combo.currentText()}' has been applied."
         )
     
+    @Slot(np.ndarray)
+    def handle_roi_frame(self, frame: np.ndarray):
+        pass
+
+    def reset_background(self):
+        """Reset the background model"""
+        if self.bg_subtractor:
+            self.bg_subtractor.reset_background()
+            QMessageBox.information(
+                self,
+                "Background Reset",
+                "Background model has been reset."
+            )
+    
     @Slot(np.ndarray, dict)
     def on_processed_frame(self, display_frame, metrics):
         """Update UI dari worker - dengan safety check"""
         if self._is_closing:
-            return
+            return  # Skip update if closing
             
         try:
             self.current_metrics = metrics or {}
@@ -606,8 +659,55 @@ class CameraDetailUI(QMainWindow):
         if self.camera_data.get('roi_points'):
             self.camera_instance.roi_points = self.camera_data['roi_points']
 
+        self.init_material_detector()  
         self.video_display.set_connecting_message()
-        self._init_camera_new()
+
+        if USE_NEW_STREAMING:
+            # NEW IMPLEMENTATION
+            self._init_camera_new()
+        else:
+            # OLD IMPLEMENTATION
+            def _attempt_connect(retry_left=3):
+                if self.camera_instance.connect():
+                    self.camera_instance.start_stream()
+                    # FIXED: Gunakan camera_instance konsisten
+                    self.camera_instance.set_preview_mode(False)
+                    cam_thread = self.camera_instance.thread
+                    
+                    if not self.worker_thread:  # agar tak duplikat
+                        self.worker_thread = QThread(self)
+
+                        bg_params = BG_PRESETS["default"]
+                        contour_params = CONTOUR_PRESETS["standard"]
+
+                        self.frame_processor = FrameProcessor(
+                            self.camera_instance,  # FIXED: konsisten menggunakan camera_instance
+                            bg_params,
+                            contour_params
+                        )
+                        self.frame_processor.moveToThread(self.worker_thread)
+
+                        cam_thread.frame_received.connect(
+                            self.frame_processor.process, Qt.QueuedConnection
+                        )
+                        self.frame_processor.processed.connect(
+                            self.on_processed_frame, Qt.QueuedConnection
+                        )
+                        self.worker_thread.start()
+                        
+                    cam_thread.error_occurred.connect(self.handle_camera_error)
+                    cam_thread.connection_changed.connect(self.handle_connection_change)
+                elif retry_left > 0:
+                    QTimer.singleShot(1000, lambda: _attempt_connect(retry_left-1))
+                else:
+                    self.video_display.set_offline_message()
+                    QMessageBox.warning(
+                        self, "Camera Connection Error",
+                        f"Failed to connect to camera: {self.camera_instance.last_error}"
+                    )
+            
+            # panggil pertama kali 100 ms setelah UI siap
+            QTimer.singleShot(100, _attempt_connect)
 
     def _init_camera_new(self):
         """New StreamWorker implementation"""
@@ -616,10 +716,7 @@ class CameraDetailUI(QMainWindow):
         # Create worker thread
         bg_params = BG_PRESETS["default"]
         contour_params = CONTOUR_PRESETS["standard"]
-
-        if hasattr(self, "stream_worker") and self.stream_worker and self.stream_worker.isRunning():
-            return
-
+        
         self.stream_worker = StreamWorker(
             self.camera_instance,
             bg_params,
@@ -639,20 +736,21 @@ class CameraDetailUI(QMainWindow):
     @Slot(int)
     def _on_state_changed(self, state: int):
         """Handle StreamWorker state changes"""
-        logger.info(f"Stream state changed: {StreamState(state).name}")
-        
-        if state == StreamState.RECONNECTING:
-            self.video_display.set_connecting_message()
-        elif state == StreamState.EDIT_ROI:
-            # Disable certain UI elements during ROI edit
-            self.bg_combo.setEnabled(False)
-            self.contour_combo.setEnabled(False)
-        elif state == StreamState.UPDATING_PRESETS:
-            self.bg_combo.setEnabled(False)
-            self.contour_combo.setEnabled(False)
-        elif state in (StreamState.RUNNING, StreamState.PAUSED):
-            self.bg_combo.setEnabled(True)
-            self.contour_combo.setEnabled(True)
+        if USE_NEW_STREAMING:
+            logger.info(f"Stream state changed: {StreamState(state).name}")
+            
+            if state == StreamState.RECONNECTING:
+                self.video_display.set_connecting_message()
+            elif state == StreamState.EDIT_ROI:
+                # Disable certain UI elements during ROI edit
+                self.bg_combo.setEnabled(False)
+                self.contour_combo.setEnabled(False)
+            elif state == StreamState.UPDATING_PRESET:
+                self.bg_combo.setEnabled(False)
+                self.contour_combo.setEnabled(False)
+            elif state in (StreamState.RUNNING, StreamState.PAUSED):
+                self.bg_combo.setEnabled(True)
+                self.contour_combo.setEnabled(True)
 
     def edit_roi(self):
         """Open ROI selector dialog and update camera ROI points"""
@@ -661,27 +759,39 @@ class CameraDetailUI(QMainWindow):
                                 "Cannot edit ROI while camera is offline.")
             return
 
-        current_frame = self.stream_worker.get_latest_raw_frame()
+        current_frame = self._last_frame if USE_NEW_STREAMING else self.camera_instance.get_last_frame()
         if current_frame is None:
             QMessageBox.warning(self, "No Frame Available",
                                 "Could not get current frame from camera.")
             return
 
-        self.stream_worker.enter_roi_edit()
+        if USE_NEW_STREAMING:
+            # Pause the stream worker
+            if hasattr(self, 'stream_worker'):
+                self.stream_worker.enter_roi_edit()
+        else:
+            # Old implementation
+            if self.frame_processor:
+                self.frame_processor.blockSignals(True)
         
         dialog = ROISelectorDialog(current_frame, self)
         if not dialog.exec():
-            self.stream_worker.resume()
+            # Resume if cancelled
+            if USE_NEW_STREAMING:
+                if hasattr(self, 'stream_worker'):
+                    self.stream_worker.resume()
+            else:
+                # TAMBAH: Resume if cancelled
+                if self.frame_processor:
+                    self.frame_processor.blockSignals(False)
             return
 
         roi_points, _ = dialog.get_roi()
         if not roi_points:
-            self.stream_worker.resume()
             return
 
         # simpan di objek kamera
         self.camera_instance.roi_points = roi_points
-        self.camera_data['roi_points'] = roi_points
 
         # konversi ke JSON
         roi_points_json = json.dumps([list(p) for p in roi_points])
@@ -689,28 +799,26 @@ class CameraDetailUI(QMainWindow):
         if 'id' not in self.camera_data:
             QMessageBox.warning(self, "Camera ID Missing",
                                 "Could not identify camera ID for database update.")
-            self.stream_worker.resume()
             return
 
-        db_signals = DBSignals()
-        def on_db_finished(result):
-            if result:
-                 QMessageBox.information(self, "ROI Diperbarui", "Region of interest telah berhasil diperbarui di database.")
-            else:
-                 QMessageBox.warning(self, "Gagal Memperbarui", "Gagal memperbarui ROI di database. Lihat log untuk detail.")
-
-        def on_db_error(error_message):
-            QMessageBox.critical(self, "Kesalahan Database", f"Terjadi kesalahan saat mengakses database:\n{error_message}")
-            logger.error(error_message)
-
-        db_signals.finished.connect(on_db_finished)
-        db_signals.error.connect(on_db_error)
-
-        # 3. Buat worker dan berikan objek sinyal serta nama metode dan argumennya
-        worker = DBWorker(db_signals, "update_roi_points", self.camera_data['id'], roi_points_json)
+        worker = DBWorker("update_roi_points", self.camera_data['id'], roi_points_json)
+        worker.signals.finished.connect(
+            lambda ok: QMessageBox.information(
+                self,
+                "ROI Updated" if ok else "Update Failed",
+                "Region of interest has been updated successfully."
+                if ok else "Failed to update ROI in database."
+            )
+        )
+        worker.signals.error.connect(lambda err: QMessageBox.critical(self, "DB Error", err))
         QThreadPool.globalInstance().start(worker)
 
-        self.stream_worker.restart_with_new_roi(roi_points)
+        if USE_NEW_STREAMING:
+            if hasattr(self, 'stream_worker'):
+                self.stream_worker.resume()
+        else:
+            if self.frame_processor:
+                self.frame_processor.blockSignals(False)
     
     def show_data_logs(self):
         cam_id = self.camera_data.get('id')
@@ -747,75 +855,110 @@ class CameraDetailUI(QMainWindow):
             self.video_display.set_offline_message()
     
     def closeEvent(self, event):
-        """
-        Improved cleanup dengan urutan yang benar untuk mencegah segfault.
-        """
-        # 1. Cek apakah proses penutupan sudah berjalan untuk menghindari rekursi
-        if self._is_closing:
-            event.ignore() # Abaikan event close tambahan
+        """Improved cleanup dengan threading safety dan proper order"""
+        if self._cleanup_done:
+            super().closeEvent(event)
             return
             
         self._is_closing = True
-        logger.info("Starting cleanup for CameraDetailUI...")
         
-        # 2. Hentikan semua timer yang berjalan di thread UI
-        self.ui_update_timer.stop()
-        
-        # 3. Hentikan worker thread dengan SANGAT aman
-        if hasattr(self, 'stream_worker') and self.stream_worker:
-            # 3a. Putuskan semua koneksi sinyal. Ini mencegah sinyal terakhir
-            #     dikirim ke slot yang mungkin sudah tidak valid saat cleanup.
-            try:
-                self.stream_worker.frame_ready.disconnect()
-                self.stream_worker.error_occurred.disconnect()
-                self.stream_worker.connection_changed.disconnect()
-                self.stream_worker.state_changed.disconnect()
-                logger.info("StreamWorker signals disconnected.")
-            except (TypeError, RuntimeError):
-                # TypeError jika sinyal tidak punya koneksi, RuntimeError jika objek sudah rusak
-                logger.warning("Could not disconnect signals, may already be disconnected.")
-
-            # 3b. Minta worker untuk berhenti dan TUNGGU hingga selesai.
-            if self.stream_worker.isRunning():
-                logger.info("Stopping StreamWorker from CameraDetail...")
+        try:
+            if USE_NEW_STREAMING and hasattr(self, "stream_worker"):
                 self.stream_worker.stop()
-                # Beri waktu maksimum 5 detik untuk berhenti dengan baik
-                if not self.stream_worker.wait(5000): 
-                    logger.warning("StreamWorker did not stop gracefully, terminating.")
-                    self.stream_worker.terminate() # Langkah berisiko, tapi perlu untuk UI yg responsif
+                self.stream_worker.wait()
+            else:
+                # Old implementation cleanup (existing code)
+                # 1. Stop camera thread FIRST (sebelum disconnect apapun)
+                if self.camera_instance:
+                    if hasattr(self.camera_instance, 'thread') and self.camera_instance.thread:
+                        self.camera_instance.thread.stop()
+                        if not self.camera_instance.thread.wait(3000):  # 3 detik timeout
+                            import logging
+                            logging.warning("Camera thread failed to stop gracefully")
+                            # JANGAN terminate() - biarkan saja
+
+                # 3. Stop worker thread
+                if self.worker_thread and self.worker_thread.isRunning():
+                    # Block signals from frame processor
+                    if self.frame_processor:
+                        self.frame_processor.blockSignals(True)
+                    
+                    self.worker_thread.quit()
+                    # Wait longer and NEVER terminate
+                    if not self.worker_thread.wait(5000):
+                        import logging
+                        logging.error("Worker thread failed to stop gracefully after 5s")
+                        # Do NOT terminate - let it finish naturally
+                    
+                    self.worker_thread = None
+
+                # 4. Cleanup frame processor
+                if self.frame_processor:
+                    try:
+                        self.frame_processor.deleteLater()
+                    except RuntimeError:
+                        pass
+                    self.frame_processor = None
+
+                # 5. Stop camera streaming
+                if self.camera_instance:
+                    try:
+                        # Stop streaming
+                        if hasattr(self.camera_instance, 'thread'):
+                            self.camera_instance.thread.stop()
+                        
+                        # Set preview mode
+                        self.camera_instance.set_preview_mode(True)
+                        
+                        # Disconnect
+                        self.camera_instance.disconnect()
+                    except Exception:
+                        pass
+
+                self.camera_instance = None
+
+                # 6. Flush coverage logger (non-blocking)
+                if hasattr(self, 'coverage_logger') and self.coverage_logger:
+                    try:
+                        self.coverage_logger.flush()
+                    except Exception:
+                        pass
+
+                # 7. Notify parent window
+                if self.parent():
+                    try:
+                        parent = self.parent()
+                        if hasattr(parent, 'resume_background_tasks'):
+                            parent.resume_background_tasks()
+                        if hasattr(parent, '_detail_window'):
+                            parent._detail_window = None
+                        parent.show()
+                    except RuntimeError:
+                        pass
+                pass
+
+            self._cleanup_done = True
             
-            # 3c. Jadwalkan penghapusan worker oleh event loop. Ini cara teraman.
-            self.stream_worker.deleteLater()
-            self.stream_worker = None # Hapus referensi internal
-            logger.info("StreamWorker stopped and scheduled for deletion.")
+        except Exception as e:
+            import logging
+            logging.error(f"Error during cleanup: {e}")
 
-        # 4. Setelah semua thread berhenti, baru tampilkan kembali parent
-        parent = self.parent()
-        if parent:
-            try:
-                # Pastikan parent adalah widget yang valid sebelum ditampilkan
-                from shiboken6 import isValid
+        if self.parent():
+            self.parent().show()
+        elif not QApplication.topLevelWidgets():
+            QApplication.quit()
 
-                if isValid(parent):
-                    parent.show()
-            except RuntimeError:
-                logger.warning("Parent widget was already deleted.")
-
-        # Tandai cleanup selesai
-        self._cleanup_done = True
-        
-        # 5. Terima event close, biarkan Qt melanjutkan penghancuran widget
-        logger.info("CameraDetailUI cleanup complete. Accepting close event.")
-        event.accept()
+        super().closeEvent(event)
 
 
+# Run the application
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
     # Sample camera data for testing
     sample_camera_data = {
         'name': 'Test Camera',
-        'ip': '0',
+        'ip': '0',  # Use webcam for testing
         'port': 0
     }
     

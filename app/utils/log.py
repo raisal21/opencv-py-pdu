@@ -14,7 +14,7 @@ def setup(debug: bool = False) -> None:
     
     # Create formatter
     formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
+        "%(asctime)s [%(levelname)-1s] %(name)s: %(message)s",
         datefmt="%H:%M:%S"
     )
     

@@ -112,7 +112,7 @@ class Camera:
             try:
                 self.capture = cv.VideoCapture(url, cv.CAP_FFMPEG, params)
                 if hasattr(cv, "CAP_PROP_THREAD_COUNT"):
-                    cap.set(cv.CAP_PROP_THREAD_COUNT, 1)
+                    self.capture.set(cv.CAP_PROP_THREAD_COUNT, 1)
             except (cv.error, AttributeError):
                 logging.warning("CAP_PROP_OPEN_TIMEOUT_MSEC tidak tersedia — memakai fallback tanpa timeout")
                 self.capture = cv.VideoCapture(url, cv.CAP_FFMPEG)
@@ -128,14 +128,12 @@ class Camera:
                 self.last_error = None
                 return True
             else:
-                self.last_error = "Gagal membuka koneksi kamera"
-                import logging
-                logging.error(f"Koneksi gagal: {self.last_error}")
-                return False
                 if self.capture:
                     self.capture.release()
                     self.capture = None
+                self.connection_status = False
                 self.last_error = "Gagal membuka koneksi kamera"
+                logger.error(f"Koneksi kamera {self.name} gagal: {self.last_error}")
                 return False
                 
         except Exception as e:

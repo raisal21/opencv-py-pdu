@@ -325,6 +325,7 @@ class CameraList(QWidget):
         self.error_handler = error_handler
         self.active_cameras = {}
         self.snapshot_done = set()
+        self.preview_cache = {}
 
         self.ping_pool   = QThreadPool.globalInstance()
         self.ping_pool.setMaxThreadCount(2)
@@ -424,13 +425,12 @@ class CameraList(QWidget):
                 item.widget().deleteLater()
 
         # Logika untuk menampilkan pesan "No cameras found" tetap sama
-        if (not hasattr(self, "empty_label")) or (not self.empty_label.parent()): # Cek validitas
-            self.empty_label = QLabel(
-                "No cameras found. Click 'Add Camera' to get started.",
-                self.cameras_container
-            )
-            self.empty_label.setAlignment(Qt.AlignCenter)
-            self.cameras_layout.addWidget(self.empty_label)
+        self.empty_label = QLabel(
+            "No cameras found. Click 'Add Camera' to get started.",
+            self.cameras_container
+        )
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.cameras_layout.addWidget(self.empty_label)
         
         self.empty_label.setVisible(True)
 
@@ -451,6 +451,7 @@ class CameraList(QWidget):
         self._hide_empty_label()
 
         for camera_data in cameras:
+            preview = self.preview_cache.get(camera_data['id'], None)
             camera_item = CameraItem(
                 camera_id=camera_data['id'],
                 camera_name=camera_data['name'],
@@ -461,7 +462,8 @@ class CameraList(QWidget):
                 password=camera_data['password'],
                 stream_path=camera_data['stream_path'],
                 url=camera_data['url'],
-                is_online=False
+                is_online=False,
+                preview_image=preview if preview is not None else None
             )
             camera_item.camera_clicked.connect(self.open_camera_detail)
             camera_item.edit_clicked.connect(self.edit_camera)
@@ -648,6 +650,24 @@ class CameraList(QWidget):
         # PEMANGGILAN BENAR: Gunakan worker untuk delete_camera
         worker = DBWorker(delete_signals, "delete_camera", camera_data['id'])
         QThreadPool.globalInstance().start(worker)
+
+    
+    def _on_camera_deleted(self, success, camera_name, camera_id):
+        """Handle completion of camera deletion."""
+        if success:
+            # Remove from caches
+            self.active_cameras.pop(camera_id, None)
+            self.preview_cache.pop(camera_id, None)
+            self.load_cameras()
+            QMessageBox.information(
+                self.window(), "Camera Deleted",
+                f"Camera '{camera_name}' has been deleted successfully."
+            )
+        else:
+            QMessageBox.warning(
+                self.window(), "Delete Failed",
+                "Failed to delete camera. Please try again."
+            )
         
     def _refresh_previews(self):
         """
@@ -676,7 +696,7 @@ class CameraList(QWidget):
                 pixmap = convert_cv_to_pixmap(frame, QSize(160, 90))
                 if not pixmap.isNull():
                     widget.set_preview(pixmap)
-                    # Update status menjadi online karena snapshot berhasil
+                    self.preview_cache[camera_id] = pixmap
                     widget.update_status(True)
                 break
 

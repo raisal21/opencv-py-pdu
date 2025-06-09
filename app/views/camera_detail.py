@@ -5,6 +5,7 @@ import threading
 import numpy as np
 import json 
 import logging
+import gc
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QLabel, QComboBox, QPushButton, 
                                QFrame, QSizePolicy, QGridLayout, QSpacerItem,
@@ -806,6 +807,14 @@ class CameraDetailUI(QMainWindow):
                     parent.show()
             except RuntimeError:
                 logger.warning("Parent widget was already deleted.")
+
+        if hasattr(self, "coverage_logger") and self.coverage_logger:
+            try:
+                self.coverage_logger.flush()
+                self.coverage_logger.stop()
+                gc.collect()
+            except Exception as e:
+                logger.warning(f"Failed stopping CoverageLogger: {e}")
 
         # Tandai cleanup selesai
         self._cleanup_done = True

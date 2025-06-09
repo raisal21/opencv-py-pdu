@@ -4,7 +4,7 @@ import datetime
 import threading
 import queue
 
-from PySide6.QtCore import QStandardPaths, QRunnable, QThreadPool, QMetaObject, Qt
+from PySide6.QtCore import QStandardPaths, QRunnable, QThreadPool, QMetaObject, Qt, QTimer
 
 # Lokasi default: Dokumen → EyeLog → DataLogs
 DEFAULT_LOG_DIR = os.path.join(
@@ -104,7 +104,8 @@ class CoverageLogger:
             if callable(self._finished_cb):
                 # Pastikan callback dieksekusi di GUI thread
                 from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, self._finished_cb)
+                from PySide6.QtWidgets import QApplication
+                QTimer.singleShot(0, QApplication.instance(), self._finished_cb)
 
     def flush_async(self, finished_cb=None):
         """

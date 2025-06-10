@@ -2,7 +2,7 @@ import traceback
 import logging
 import threading
 from PySide6.QtCore import QRunnable, QObject, Signal, QMutex, QMutexLocker, Slot
-from models.database import DatabaseManager, DB_PATH
+from ..models.database import DatabaseManager, DB_PATH
 
 logger = logging.getLogger(__name__)
 

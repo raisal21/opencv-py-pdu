@@ -1,7 +1,7 @@
 # ping_scheduler.py
 import logging
 from PySide6.QtCore import QRunnable, Signal, QObject
-from views.add_camera import validate_ip_address
+from ..views.add_camera import validate_ip_address
 
 logger = logging.getLogger(__name__) 
 

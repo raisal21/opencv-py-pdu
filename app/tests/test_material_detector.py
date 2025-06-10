@@ -11,7 +11,7 @@ import cv2 as cv
 import numpy as np
 import pytest
 
-from utils.material_detector import (
+from ..utils.material_detector import (
     ForegroundExtraction,
     ContourProcessor,
 )

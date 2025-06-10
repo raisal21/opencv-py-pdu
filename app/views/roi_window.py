@@ -14,8 +14,8 @@ utils_dir = os.path.abspath(os.path.join(current_dir, '../utils'))
 sys.path.append(utils_dir)
 
 # Import the ROI selector
-from resources import resource_path
-from utils.roi_selector import ROISelector
+from ..resources import resource_path
+from ..utils.roi_selector import ROISelector
 
 class ROISelectorDialog(QDialog):
     """

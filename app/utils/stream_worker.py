@@ -12,7 +12,7 @@ import json
 import gc
 from enum import IntEnum
 from typing import Optional, Tuple
-from utils.material_detector import ForegroundExtraction, ContourProcessor
+from ..utils.material_detector import ForegroundExtraction, ContourProcessor
 from PySide6.QtCore import (
     QThread, Signal, QMutex, QMutexLocker, QWaitCondition,
     Qt, Slot, QTimer

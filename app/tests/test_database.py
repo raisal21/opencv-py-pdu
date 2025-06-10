@@ -18,7 +18,7 @@ import sqlite3
 import pytest
 
 # Import modul yang diuji
-from models.database import DatabaseManager
+from ..models.database import DatabaseManager
 
 # ---------------------------------------------------------------------------
 # FIXTURES

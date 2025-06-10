@@ -7,7 +7,7 @@ import numpy as np
 import time
 import platform
 from PySide6.QtCore import QRunnable, Signal, QObject, QMutex, QMutexLocker
-from models.camera import Camera
+from ..models.camera import Camera
 
 logger = logging.getLogger(__name__)
 

@@ -21,8 +21,8 @@ elif platform.system() == "Darwin":  # macOS
     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 # Import after environment setup
-from resources import resource_path
-from utils.log import setup as setup_logging, setup_file_logging
+from .resources import resource_path
+from .utils.log import setup as setup_logging, setup_file_logging
 
 
 def load_fonts():
@@ -66,7 +66,7 @@ if __name__ == "__main__":
     # Create the application FIRST
     app = QApplication(sys.argv)
 
-    from splash_screen import SplashScreen
+    from .splash_screen import SplashScreen
     splash = SplashScreen()
     splash.show()
     app.processEvents()
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     
     # Import dan jalankan aplikasi utama setelah semua setup selesai
     try:
-        from main_window import MainWindow
+        from .main_window import MainWindow
         
         window = MainWindow()
         def show_main_window():

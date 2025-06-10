@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QSplashScreen, QApplication
 from PySide6.QtGui import QPixmap, QColor
 from PySide6.QtCore import Qt, QSize
-from resources import resource_path
+from .resources import resource_path
 
 
 def SplashScreen() -> QSplashScreen:

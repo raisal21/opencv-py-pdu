@@ -2,11 +2,11 @@
 
 block_cipher = None
 a = Analysis(
-    ['app\\__init__.py'],
+    [os.path.join('app', '__init__.py')],
     pathex=[],
     binaries=[],
     datas=[
-        ('app/assets/**', 'assets')
+        (os.path.join('app', 'assets', '**'), 'assets')
     ],
     hiddenimports=[
         'PySide6.QtCharts',

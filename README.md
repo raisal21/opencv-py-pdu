@@ -26,8 +26,9 @@ opencv-py-pdu/
 │ ├── tests/ (unit testing)
 │ ├── utils/ (log, scheduler, deteksi material)
 │ ├── views/ (UI seperti tambah kamera, detail kamera)
-│ ├── init.py (inisialisasi aplikasi)
+│ ├── __init__.py (inisialisasi aplikasi)
 │ ├── main_window.py (file utama aplikasi)
+│ ├── splash_screen.py (loading app)
 │ └── resources.py (pengelolaan path asset)
 ├── database/
 │ └── eyelog_database.db (file database SQLite)
@@ -51,11 +52,13 @@ Clone repositori ini dan instal dependensi melalui pip:
 git clone https://github.com/raisal21/opencv_py_pdu.git
 cd eyelog
 pip install -r requirements.txt
+```
 
 Langkah singkat memulai aplikasi:
 
 ```bash
 python app/__init__.py
+```
 
 
 

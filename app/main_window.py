@@ -576,6 +576,8 @@ class CameraList(QWidget):
 
         if self.empty_label and self.empty_label.isVisible():
             self.empty_label.setVisible(False)
+        
+        self.active_cameras[camera_id] = Camera.from_dict(camera_data)
 
         camera_item = CameraItem(
             camera_id=camera_id,
@@ -594,7 +596,6 @@ class CameraList(QWidget):
         camera_item.delete_clicked.connect(self.delete_camera)
         self.cameras_layout.addWidget(camera_item)
 
-        self.active_cameras[camera_id] = Camera.from_dict(camera_data)
         # Request ONE-TIME snapshot untuk camera baru
         self._request_initial_snapshot(camera_id)
     
@@ -713,6 +714,7 @@ class CameraList(QWidget):
     def _on_snapshot_received(self, camera_id: int, frame: np.ndarray):
         """Callback di GUI thread saat snapshot diterima"""
         # Find the camera widget
+        found = False
         for i in range(self.cameras_layout.count()):
             widget = self.cameras_layout.itemAt(i).widget()
             if isinstance(widget, CameraItem) and widget.camera_id == camera_id:
@@ -722,7 +724,13 @@ class CameraList(QWidget):
                     widget.set_preview(pixmap)
                     self.preview_cache[camera_id] = pixmap
                     widget.update_status(True)
+                found = True
                 break
+            
+        if not found:
+            pixmap = convert_cv_to_pixmap(frame, QSize(160, 90))
+            if not pixmap.isNull():
+                self.preview_cache[camera_id] = pixmap
     
     def _update_item_status(self, camera_id: int, is_online: bool):
         """Update status untuk satu CameraItem jika masih valid."""

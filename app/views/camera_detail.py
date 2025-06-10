@@ -718,11 +718,11 @@ class CameraDetailUI(QMainWindow):
             QMessageBox.critical(self, "Kesalahan Database", f"Terjadi kesalahan saat mengakses database:\n{error_message}")
             logger.error(error_message)
 
-        db_signals.finished.connect(on_db_finished)
-        db_signals.error.connect(on_db_error)
+        self.db_signals.finished.connect(on_db_finished)
+        self.db_signals.error.connect(on_db_error)
 
         # 3. Buat worker dan berikan objek sinyal serta nama metode dan argumennya
-        worker = DBWorker(db_signals, "update_roi_points", self.camera_data['id'], roi_points_json)
+        worker = DBWorker(self.db_signals, "update_roi_points", self.camera_data['id'], roi_points_json)
         QThreadPool.globalInstance().start(worker)
 
         self.stream_worker.restart_with_new_roi(roi_points)

@@ -181,6 +181,7 @@ class StreamWorker(QThread):
                 except Exception:
                     pass
                 self._capture = None
+                # gc.collect()
 
     def _iteration(self):
         """Dipanggil periodik oleh QTimer – satu siklus penuh."""
@@ -190,6 +191,7 @@ class StreamWorker(QThread):
             self.quit()
             return
 
+        should_restart = False
         new_roi_points = None
         with QMutexLocker(self._restart_mutex):
             if self._pending_roi_restart is not None:
@@ -201,14 +203,40 @@ class StreamWorker(QThread):
             self.camera.roi_points = new_roi_points
             self._cleanup_capture()  # Hancurkan koneksi lama
             self.set_state(StreamState.RUNNING) # Pastikan state kembali running
-            # Loop akan otomatis mencoba menyambung ulang karena self._capture sekarang None
             self.msleep(100) # Beri jeda singkat sebelum mencoba lagi
+            return
+
+        if should_restart:
+            self.set_state(StreamState.RESTARTING)
+            logger.info("Restarting stream due to ROI change. State: RESTARTING")
+            
+            # Lakukan semua operasi restart dalam satu blok terkontrol
+            self._cleanup_capture()
+            self.camera.roi_points = new_roi_points
+            
+            logger.info("Attempting direct reconnection within restart sequence.")
+            self._capture = self._establish_connection()
+            
+            if self._capture and self._capture.isOpened():
+                logger.info("Reconnection successful. Resuming normal operation.")
+                self.set_state(StreamState.RUNNING)
+            else:
+                logger.warning("Reconnection failed. Entering RECONNECTING state.")
+                self.set_state(StreamState.RECONNECTING)
+                self._last_reconnect_attempt = time.time()
+            
+            # Restart timer setelah semua operasi selesai
+            if self._timer and not self._timer.isActive():
+                self._timer.start(0)
             return
 
         state = self.state
         if state != StreamState.RUNNING:
-            # Beri jeda singkat agar CPU tidak sibuk saat menunggu
-            self.msleep(100) 
+            if state in (StreamState.PAUSED, StreamState.EDIT_ROI, StreamState.UPDATING_PRESETS):
+                 self.msleep(100) # Jeda singkat untuk state non-aktif
+            elif state == StreamState.RECONNECTING:
+                self._handle_reconnecting_state()
+            # Jangan lakukan apa-apa untuk state RESTARTING karena sudah ditangani di atas
             return
 
         # --- Perbaikan: Terapkan update preset secara aman ---
@@ -217,26 +245,15 @@ class StreamWorker(QThread):
         loop_start = time.time()
 
         try:
-            state = self.state
-            if state in (StreamState.PAUSED, StreamState.EDIT_ROI, StreamState.RESTARTING):
-                self._handle_paused_state(); self._adjust_timer(loop_start); return
-                
-            if state in (StreamState.PAUSED, StreamState.EDIT_ROI):
-                self._handle_paused_state()
-                self._adjust_timer(loop_start)
-                return
-
-            if state == StreamState.RECONNECTING:
-                self._handle_reconnecting_state()
-                self._adjust_timer(loop_start)
-                return
-
             if self._capture is None or not self._capture.isOpened():
+                logger.warning("Capture is not available or closed. Entering RECONNECTING state.")
                 self._capture = self._establish_connection()
                 if self._capture is None:
                     self.set_state(StreamState.RECONNECTING)
                     self._adjust_timer(loop_start)
                     return
+                else:
+                    logger.info("Initial connection successful. Proceeding with frame read.")
 
             ret, frame = self._read_with_timeout(self._capture, self.read_timeout_ms)
             if not ret or frame is None:
@@ -339,14 +356,15 @@ class StreamWorker(QThread):
         logger.info("Queueing ROI restart request.")
         with QMutexLocker(self._restart_mutex):
             self._pending_roi_restart = points
+        self._state_condition.wakeAll()
 
     def _initialize_processors(self):
         logger.info("Initializing processors (Phase 2)")
-        if self.bg_subtractor is not None:
-            self.bg_subtractor = None
-        if self.contour_processor is not None:
-            self.contour_processor = None
-        gc.collect()
+        # if self.bg_subtractor is not None:
+        #     self.bg_subtractor = None
+        # if self.contour_processor is not None:
+        #     self.contour_processor = None
+        # gc.collect()
         
         self.bg_subtractor = ForegroundExtraction(**self.bg_params)
         self.contour_processor = ContourProcessor(**self.contour_params)
@@ -395,6 +413,10 @@ class StreamWorker(QThread):
     def _apply_pending_preset_updates(self):
         """Menerapkan pembaruan preset yang tertunda dari UI thread."""
         bg_updated, contour_updated = False, False
+
+        if self.state != StreamState.RUNNING:
+            return
+
         with QMutexLocker(self._params_mutex):
             if self._pending_bg_params:
                 self.bg_params = self._pending_bg_params

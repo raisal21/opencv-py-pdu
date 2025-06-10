@@ -699,14 +699,22 @@ class CameraDetailUI(QMainWindow):
             self.stream_worker.resume()
             return
 
-        db_signals = DBSignals()
+        self.db_signals = DBSignals()
         def on_db_finished(result):
+            if self._is_closing:
+                logger.info("DB operation finished, but window is closing. Skipping MessageBox.")
+                return
+
             if result:
                  QMessageBox.information(self, "ROI Diperbarui", "Region of interest telah berhasil diperbarui di database.")
             else:
                  QMessageBox.warning(self, "Gagal Memperbarui", "Gagal memperbarui ROI di database. Lihat log untuk detail.")
 
         def on_db_error(error_message):
+            if self._is_closing:
+                logger.warning(f"DB Error occurred but window is closing: {error_message}")
+                return
+
             QMessageBox.critical(self, "Kesalahan Database", f"Terjadi kesalahan saat mengakses database:\n{error_message}")
             logger.error(error_message)
 
@@ -767,6 +775,13 @@ class CameraDetailUI(QMainWindow):
         
         # 2. Hentikan semua timer yang berjalan di thread UI
         self.ui_update_timer.stop()
+
+        if hasattr(self, 'db_signals') and self.db_signals:
+            try:
+                self.db_signals.disconnect()
+                logger.info("DB signals disconnected.")
+            except (TypeError, RuntimeError):
+                pass
         
         # 3. Hentikan worker thread dengan SANGAT aman
         if hasattr(self, 'stream_worker') and self.stream_worker:

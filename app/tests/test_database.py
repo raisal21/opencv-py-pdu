@@ -41,6 +41,7 @@ def db(tmp_path):
 def test_add_and_get_camera(db):
     manager, conn = db
     cam_id = manager.add_camera(
+        conn,
         name="Cam1",
         ip_address="192.168.0.1",
         port=554,
@@ -50,9 +51,10 @@ def test_add_and_get_camera(db):
         stream_path="stream1",
         url="rtsp://admin:pass@192.168.0.1:554/stream1",
     )
+    conn.commit()
     assert isinstance(cam_id, int) and cam_id > 0
 
-    cam = db.get_camera(cam_id)
+    cam = manager.get_camera(conn, cam_id)
     assert cam is not None
     assert cam["name"] == "Cam1"
     assert cam["ip_address"] == "192.168.0.1"
@@ -62,6 +64,7 @@ def test_add_and_get_camera(db):
 def test_update_camera(db):
     manager, conn = db
     cam_id = manager.add_camera(
+        conn,
         "CamX",
         "192.168.0.2",
         8554,
@@ -69,6 +72,7 @@ def test_update_camera(db):
         stream_path="video",
         url="rtsp://192.168.0.2:8554/video",
     )
+    conn.commit()
 
     ok = manager.update_camera(
         conn,
@@ -85,25 +89,25 @@ def test_update_camera(db):
     assert ok is True
 
     conn.commit()
-    cam = manager.get_camera(cam_id)
+    cam = manager.get_camera(conn, cam_id)
     assert cam["name"] == "CamX‑Renamed"
 
 
 def test_get_all_cameras(db):
     manager, conn = db
     ids = [
-        manager.add_camera(f"Cam{i}", f"10.0.0.{i}", 554, url=f"rtsp://10.0.0.{i}:554/stream")
+        manager.add_camera(conn,f"Cam{i}", f"10.0.0.{i}", 554, url=f"rtsp://10.0.0.{i}:554/stream")
         for i in range(3)
     ]
     conn.commit()
-    cams = manager.get_all_cameras()
+    cams = manager.get_all_cameras(conn)
     retrieved_ids = {c["id"] for c in cams}
     assert set(ids) <= retrieved_ids  # semua id yang ditambahkan ada di hasil
 
 
 def test_delete_camera(db):
     manager, conn = db
-    cam_id = manager.add_camera("DelCam", "10.0.0.99", 554, url="rtsp://10.0.0.99/stream")
+    cam_id = manager.add_camera(conn,"DelCam", "10.0.0.99", 554, url="rtsp://10.0.0.99/stream")
     conn.commit()
     ok = manager.delete_camera(conn, cam_id)
     assert ok is True

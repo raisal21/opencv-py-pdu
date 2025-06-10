@@ -1,4 +1,4 @@
- """ 
+""" 
 Unit‑test terfokus pada operasi utama DatabaseManager:
   • add_camera
   • get_camera  / get_all_cameras
@@ -18,7 +18,7 @@ import sqlite3
 import pytest
 
 # Import modul yang diuji
-from database import DatabaseManager
+from models.database import DatabaseManager
 
 # ---------------------------------------------------------------------------
 # FIXTURES
@@ -26,18 +26,21 @@ from database import DatabaseManager
 
 @pytest.fixture
 def db(tmp_path):
-    """Buat DatabaseManager pointing ke file SQLite sementara."""
+    """Buat DatabaseManager dan koneksi SQLite sementara."""
     db_file = tmp_path / "unit_db.sqlite"
     manager = DatabaseManager(db_path=os.fspath(db_file))
-    yield manager  # test dijalankan
-    # tidak perlu explicit cleanup – tmp_path dihapus pytest
+    conn = DatabaseManager.get_connection(db_path=os.fspath(db_file))
+    DatabaseManager.ensure_tables(conn)
+    yield manager, conn
+    conn.close()
 
 # ---------------------------------------------------------------------------
 # TEST‑CASE PRIORITAS 1
 # ---------------------------------------------------------------------------
 
 def test_add_and_get_camera(db):
-    cam_id = db.add_camera(
+    manager, conn = db
+    cam_id = manager.add_camera(
         name="Cam1",
         ip_address="192.168.0.1",
         port=554,
@@ -57,7 +60,8 @@ def test_add_and_get_camera(db):
 
 
 def test_update_camera(db):
-    cam_id = db.add_camera(
+    manager, conn = db
+    cam_id = manager.add_camera(
         "CamX",
         "192.168.0.2",
         8554,
@@ -66,7 +70,8 @@ def test_update_camera(db):
         url="rtsp://192.168.0.2:8554/video",
     )
 
-    ok = db.update_camera(
+    ok = manager.update_camera(
+        conn,
         camera_id=cam_id,
         name="CamX‑Renamed",
         ip_address="192.168.0.2",
@@ -79,25 +84,30 @@ def test_update_camera(db):
     )
     assert ok is True
 
-    cam = db.get_camera(cam_id)
+    conn.commit()
+    cam = manager.get_camera(cam_id)
     assert cam["name"] == "CamX‑Renamed"
 
 
 def test_get_all_cameras(db):
+    manager, conn = db
     ids = [
-        db.add_camera(f"Cam{i}", f"10.0.0.{i}", 554, url="rtsp://10.0.0.{i}:554/stream")
+        manager.add_camera(f"Cam{i}", f"10.0.0.{i}", 554, url=f"rtsp://10.0.0.{i}:554/stream")
         for i in range(3)
     ]
-    cams = db.get_all_cameras()
+    conn.commit()
+    cams = manager.get_all_cameras()
     retrieved_ids = {c["id"] for c in cams}
     assert set(ids) <= retrieved_ids  # semua id yang ditambahkan ada di hasil
 
 
 def test_delete_camera(db):
-    cam_id = db.add_camera("DelCam", "10.0.0.99", 554, url="rtsp://10.0.0.99/stream")
-    ok = db.delete_camera(cam_id)
+    manager, conn = db
+    cam_id = manager.add_camera("DelCam", "10.0.0.99", 554, url="rtsp://10.0.0.99/stream")
+    conn.commit()
+    ok = manager.delete_camera(conn, cam_id)
     assert ok is True
-    assert db.get_camera(cam_id) is None
+    assert manager.get_camera(conn, cam_id) is None
 
 # ---------------------------------------------------------------------------
 # TEST SCHÉMA /MIGRASI
@@ -106,11 +116,12 @@ def test_delete_camera(db):
 def test_schema_tables_created(tmp_path):
     """Pastikan tabel 'cameras' & 'schema_version' tercipta pada DB baru."""
     db_file = tmp_path / "schema.sqlite"
-    _ = DatabaseManager(db_path=os.fspath(db_file))  # hanya instantiate
+    conn = DatabaseManager.get_connection(db_path=os.fspath(db_file))
+    DatabaseManager.ensure_tables(conn)
 
-    with sqlite3.connect(db_file) as con:
-        cur = con.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cameras'")
-        assert cur.fetchone() is not None
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
-        assert cur.fetchone() is not None
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cameras'")
+    assert cur.fetchone() is not None
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
+    assert cur.fetchone() is not None
+    conn.close()

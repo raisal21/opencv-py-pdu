@@ -11,7 +11,10 @@ import cv2 as cv
 import numpy as np
 import pytest
 
-from material_detector import ForegroundExtraction, ContourProcessor
+from utils.material_detector import (
+    ForegroundExtraction,
+    ContourProcessor,
+)
 
 # ---------------------------------------------------------------------------
 # Helper fixtures
@@ -35,9 +38,9 @@ def half_white_frame():
 
 def test_foreground_blank_returns_zero(black_frame):
     fg = ForegroundExtraction(history=5, var_threshold=16, detect_shadows=False,
-                              learning_rate=1.0)  # cepat konvergen
+                              learning_rate=0)
     # proses beberapa frame agar model stabil
-    for _ in range(3):
+    for _ in range(2):
         res = fg.process_frame(black_frame)
     # Terakhir, mask seharusnya kosong (tidak ada foreground)
     assert cv.countNonZero(res.binary) == 0

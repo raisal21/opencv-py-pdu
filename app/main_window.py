@@ -529,12 +529,7 @@ class CameraList(QWidget):
         """Menambahkan kamera baru ke database secara asinkron."""
         # Pola baru yang aman untuk worker
         signals = DBSignals()
-        signals.finished.connect(
-            lambda cam_id: self._on_camera_added(
-                cam_id, name, ip_address, port, protocol,
-                username, password, stream_path, url, roi_points
-            )
-        )
+        signals.finished.connect(self._get_added_camera_data)
         signals.error.connect(self.window()._db_error_msg)
 
         # Buat worker dengan memberikan objek sinyal
@@ -549,9 +544,32 @@ class CameraList(QWidget):
         QThreadPool.globalInstance().start(worker)
         return True
 
-    def _on_camera_added(self, camera_id, name, ip_address, port, protocol,
-                         username, password, stream_path, url, roi_points):
+    @Slot(int)
+    def _get_added_camera_data(self, camera_id: int):
+        """Langkah 2: Mengambil data lengkap dari kamera yang baru ditambahkan."""
+        if not camera_id:
+            QMessageBox.warning(self, "Database Error", "Gagal mendapatkan ID untuk kamera baru.")
+            return
+
+        signals = DBSignals()
+        # Hubungkan sinyal 'finished' (yang akan membawa data kamera lengkap) ke fungsi final
+        signals.finished.connect(self._on_camera_added)
+        signals.error.connect(self.window()._db_error_msg)
+
+        # Buat worker untuk mengambil data kamera dari DB
+        worker = DBWorker(signals, "get_camera", camera_id)
+        QThreadPool.globalInstance().start(worker)
+    
+    @Slot(dict)
+    def _on_camera_added(self, camera_data: dict):
         """Handler ketika camera baru ditambahkan"""
+        if not camera_data:
+            QMessageBox.warning(self, "Database Error", "Gagal mengambil data kamera yang baru ditambahkan.")
+            return
+        if self.empty_label and self.empty_label.isVisible():
+            self.empty_label.setVisible(False)
+
+        camera_id = camera_data.get("id")
         if not camera_id:
             QMessageBox.warning(self, "DB Error", "Failed to add camera.")
             return
@@ -561,26 +579,22 @@ class CameraList(QWidget):
 
         camera_item = CameraItem(
             camera_id=camera_id,
-            camera_name=name,
-            ip_address=ip_address,
-            port=port,
-            protocol=protocol,
-            username=username,
-            password=password,
-            stream_path=stream_path,
-            url=url,
+            camera_name=camera_data['name'],
+            ip_address=camera_data['ip_address'],
+            port=camera_data['port'],
+            protocol=camera_data['protocol'],
+            username=camera_data['username'],
+            password=camera_data['password'],
+            stream_path=camera_data['stream_path'],
+            url=camera_data['url'],
         )
+        
         camera_item.camera_clicked.connect(self.open_camera_detail)
         camera_item.edit_clicked.connect(self.edit_camera)
         camera_item.delete_clicked.connect(self.delete_camera)
         self.cameras_layout.addWidget(camera_item)
 
-        self.active_cameras[camera_id] = Camera.from_dict({
-            'id': camera_id, 'name': name, 'ip_address': ip_address, 'port': port,
-            'protocol': protocol, 'username': username, 'password': password,
-            'stream_path': stream_path, 'url': url, 'roi_points': roi_points
-        })
-        
+        self.active_cameras[camera_id] = Camera.from_dict(camera_data)
         # Request ONE-TIME snapshot untuk camera baru
         self._request_initial_snapshot(camera_id)
     

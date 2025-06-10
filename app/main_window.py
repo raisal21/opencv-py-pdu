@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import time
+import logging
 from typing import Any
 import numpy as np
 import cv2 as cv
@@ -22,7 +23,9 @@ from utils.db_worker import DBWorker, DBSignals
 from utils.ping_scheduler import PingWorker
 from utils.preview_scheduler import SnapshotWorker, PreviewScheduler
 
-setup_log("--debug" in sys.argv)  
+logger = logging.getLogger(__name__)
+
+setup_log("--debug" in sys.argv)
 
 
 class DeleteCameraDialog(QDialog):
@@ -331,6 +334,7 @@ class CameraList(QWidget):
         self.snapshot_done = set()
         self.preview_cache = {}
 
+        self.db_pool = QThreadPool.globalInstance()
         self.ping_pool   = QThreadPool.globalInstance()
         self.ping_pool.setMaxThreadCount(2)
         self.ping_timer  = QTimer(self)
@@ -423,6 +427,8 @@ class CameraList(QWidget):
     def load_cameras(self):
         """Memuat daftar kamera dari database secara asinkron."""
         # Membersihkan layout terlebih dahulu (logika Anda tetap sama)
+        self.ping_pool.clear()
+
         while self.cameras_layout.count():
             item = self.cameras_layout.takeAt(0)
             if item.widget():
@@ -703,6 +709,15 @@ class CameraList(QWidget):
                     self.preview_cache[camera_id] = pixmap
                     widget.update_status(True)
                 break
+    
+    def _update_item_status(self, camera_id: int, is_online: bool):
+        """Update status untuk satu CameraItem jika masih valid."""
+        for i in range(self.cameras_layout.count()):
+            widget = self.cameras_layout.itemAt(i).widget()
+            if isinstance(widget, CameraItem) and widget.camera_id == camera_id:
+                if isValid(widget):
+                    widget.update_status(is_online)
+                break
 
     def _refresh_statuses(self):
         """Periodic ping untuk update status online/offline"""
@@ -723,8 +738,7 @@ class CameraList(QWidget):
             # Ping untuk update status
             worker = PingWorker(widget.camera_id, widget.ip_address, widget.port)
             worker.signals.finished.connect(
-                lambda cid, ok, ref=widget:
-                    ref.update_status(ok) if ref.camera_id == cid else None
+                lambda cid, ok: self._update_item_status(cid, ok)
             )
             self.ping_pool.start(worker)
     

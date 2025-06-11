@@ -2,8 +2,8 @@
 
 block_cipher = None
 a = Analysis(
-    [os.path.join('app', '__main__.py')],
-    pathex=[],
+    ['-m', 'app'],
+    pathex=[os.path.abspath('.')],
     binaries=[],
     datas=[
         (os.path.join('app', 'assets', '**'), 'assets')

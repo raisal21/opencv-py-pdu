@@ -57,7 +57,7 @@ pip install -r requirements.txt
 Langkah singkat memulai aplikasi:
 
 ```bash
-python app/__init__.py
+python -m app
 ```
 
 

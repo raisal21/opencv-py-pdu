@@ -2,19 +2,20 @@
 
 block_cipher = None
 a = Analysis(
-    ['-m', 'app'],
-    pathex=[os.path.abspath('.')],
+    ['run.py'],
+    pathex=[],
     binaries=[],
     datas=[
         (os.path.join('app', 'assets', '**'), 'assets')
     ],
     hiddenimports=[
         'PySide6.QtCharts',
+        'app.__main__', 
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tests'],
     noarchive=False,
     optimize=0,
 )
@@ -43,7 +44,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='EyeLog',
 )

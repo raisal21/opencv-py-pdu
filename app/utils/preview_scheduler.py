@@ -6,7 +6,8 @@ import cv2 as cv
 import numpy as np
 import time
 import platform
-from PySide6.QtCore import QRunnable, Signal, QObject, QMutex, QMutexLocker
+from PySide6.QtCore import QRunnable, Signal, QObject, QMutex, QMutexLocker, Slot
+from typing import Callable
 from ..models.camera import Camera
 
 logger = logging.getLogger(__name__)
@@ -156,8 +157,11 @@ class PreviewScheduler(QObject):
         super().__init__(parent)
         self.camera_dict = camera_dict
         self.pending_workers = set()  # Track active workers
+        self._callbacks: dict[int, Callable] = {}
+        self._error_callbacks: dict[int, Callable] = {}
         
-    def request_snapshot(self, camera_id: int, callback=None, error_callback=None):
+    def request_snapshot(self, camera_id: int, callback: Callable | None = None,
+                         error_callback: Callable | None = None):
         """
         Request snapshot untuk camera tertentu.
         
@@ -171,30 +175,38 @@ class PreviewScheduler(QObject):
             
         worker = SnapshotWorker(self.camera_dict, camera_id)
         
-        # Connect callbacks
+        # Store callbacks
         if callback:
-            worker.signals.finished.connect(
-                lambda cid, frame: self._handle_snapshot(cid, frame, callback)
-            )
+            self._callbacks[camera_id] = callback
         
         if error_callback:
-            worker.signals.error.connect(error_callback)
+            self._error_callbacks[camera_id] = error_callback
             
         # Track worker
         self.pending_workers.add(camera_id)
-        worker.signals.finished.connect(
-            lambda cid, _: self.pending_workers.discard(cid)
-        )
-        worker.signals.error.connect(
-            lambda cid, _: self.pending_workers.discard(cid)
-        )
+        worker.signals.finished.connect(self._snapshot_finished)
+        worker.signals.error.connect(self._snapshot_error)
         
         # Start worker
         from PySide6.QtCore import QThreadPool
         QThreadPool.globalInstance().start(worker)
     
-    def _handle_snapshot(self, camera_id: int, frame: np.ndarray, callback):
+    @Slot(int, np.ndarray)
+    def _snapshot_finished(self, camera_id: int, frame: np.ndarray):
         """Handle snapshot result di GUI thread"""
-        # Di sini kita di GUI thread, jadi aman untuk convert ke QPixmap
-        # jika callback membutuhkannya
-        callback(camera_id, frame)
+        callback = self._callbacks.pop(camera_id, None)
+        if callback:
+            callback(camera_id, frame)
+        self.pending_workers.discard(camera_id)
+
+    @Slot(int, str)
+    def _snapshot_error(self, camera_id: int, msg: str):
+        err_cb = self._error_callbacks.pop(camera_id, None)
+        if err_cb:
+            err_cb(camera_id, msg)
+        self.pending_workers.discard(camera_id)
+
+    def cancel_all(self):
+        """Clear pending callbacks to prevent invocation after shutdown."""
+        self._callbacks.clear()
+        self._error_callbacks.clear()

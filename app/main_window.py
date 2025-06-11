@@ -759,9 +759,7 @@ class CameraList(QWidget):
             
             # Ping untuk update status
             worker = PingWorker(widget.camera_id, widget.ip_address, widget.port)
-            worker.signals.finished.connect(
-                lambda cid, ok: self._update_item_status(cid, ok)
-            )
+            worker.signals.finished.connect(self._update_item_status)
             self.ping_pool.start(worker)
     
     def showEvent(self, e):
@@ -780,11 +778,15 @@ class CameraList(QWidget):
         """Proper cleanup on close"""
         # Stop all timers
         self.ping_timer.stop()
+
+        if hasattr(self, 'preview_scheduler'):
+            self.preview_scheduler.cancel_all()
         
         # Wait for thread pools to finish
         self.db_pool.waitForDone(2000)
         self.ping_pool.waitForDone(2000)
         self.preview_pool.waitForDone(2000)
+        QThreadPool.globalInstance().waitForDone(2000)
         
         # Release video capture pool
         from .utils.preview_scheduler import _capture_pool

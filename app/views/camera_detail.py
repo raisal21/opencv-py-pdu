@@ -22,7 +22,7 @@ from ..utils.material_detector import (
     CONTOUR_PRESETS
 )
 from ..utils.coverage_logger import CoverageLogger
-from .views.roi_window import ROISelectorDialog
+from .roi_window import ROISelectorDialog
 from ..utils.stream_worker import StreamWorker, StreamState
 from ..utils.db_worker import DBWorker, DBSignals
 

@@ -60,5 +60,24 @@ Langkah singkat memulai aplikasi:
 python -m app
 ```
 
+## 📦 Packaging dengan PySide6 Deploy
+
+Untuk membuat executable standalone gunakan `pyside6-deploy` bersama Nuitka. Pastikan
+`pysidedeploy.spec` memiliki pengaturan berikut agar folder `app/assets` tetap
+terkopi apa adanya:
+
+```
+extra_files = app/assets/**:app/assets
+```
+
+Perintah build yang umum dijalankan:
+
+```bash
+pyside6-deploy -c pysidedeploy.spec --mode standalone --keep-deployment-files -v
+```
+
+Folder hasil dapat ditemukan di `release/nuitka/Eyelog-Standalone.dist` dan
+fungsi `resource_path()` secara otomatis akan mencari asset di lokasi tersebut
+saat aplikasi dijalankan.
 
 

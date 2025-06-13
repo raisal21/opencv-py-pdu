@@ -18,3 +18,5 @@
 /logs
 /database
 /*.DS_Store
+/assets
+/resource

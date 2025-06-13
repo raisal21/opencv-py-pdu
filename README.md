@@ -3,7 +3,7 @@
 [\![Python 3.12.10][https://img.shields.io/badge/Python-3.12-blue.svg]][https://www.python.org/downloads/release/python-31210/]
 [\![Latest Release][https://img.shields.io/github/v/release/raisal21/opencv_py_pdu]](https://github.com/raisal21/opencv-py-pdu/releases/tag/v1.0.0)
 
-[cite\_start]**EyeLog** adalah sebuah aplikasi desktop robust yang dirancang untuk pemantauan kamera *realtime*, dilengkapi dengan analisis visual berbasis OpenCV dan antarmuka pengguna yang reaktif dan intuitif dibangun di atas PySide6. [cite: 1] [cite\_start]Aplikasi ini menawarkan solusi pemantauan visual yang andal, terutama untuk lingkungan industri dengan konektivitas terbatas di mana operasi lokal menjadi kunci. [cite: 44]
+**EyeLog** adalah sebuah aplikasi desktop robust yang dirancang untuk pemantauan kamera *realtime*, dilengkapi dengan analisis visual berbasis OpenCV dan antarmuka pengguna yang reaktif dan intuitif dibangun di atas PySide6. Aplikasi ini menawarkan solusi pemantauan visual yang andal, terutama untuk lingkungan industri dengan konektivitas terbatas di mana operasi lokal menjadi kunci.
 
 ## 🚀 Get Started
 
@@ -40,10 +40,10 @@ EyeLog tidak hanya menampilkan video, tetapi juga menganalisis dan mencatatnya s
 
 | Fitur | Deskripsi Teknis |
 | :--- | :--- |
-| **Realtime Multi-Camera Monitoring** | [cite\_start]Menampilkan *stream* video dari berbagai IP Camera melalui protokol RTSP secara bersamaan. [cite: 5] [cite\_start]Setiap status kamera (`Online`/`Offline`) dipantau secara aktif menggunakan *ping worker* di *thread* terpisah untuk memastikan UI tetap responsif. [cite: 5] |
-| **Condition-Aware Analysis** | [cite\_start]Melakukan deteksi cakupan material menggunakan *background subtraction* (MOG2) dari OpenCV. [cite: 5] [cite\_start]Tersedia berbagai *preset* deteksi (misalnya untuk kondisi malam, berdebu, atau bergetar) yang menyesuaikan parameter seperti `learningRate`, `shadows`, dan *morphology kernel* untuk akurasi maksimal dalam berbagai kondisi lapangan. [cite: 5, 13, 14] |
-| **Interactive Visualization** | [cite\_start]Visualisasi data disajikan secara *realtime*, termasuk *overlay* kontur hasil deteksi langsung di atas video stream dan grafik riwayat cakupan (coverage history) yang interaktif menggunakan QtCharts. [cite: 5, 6] |
-| **Autonomous CSV Logging** | [cite\_start]Sistem melakukan *auto-logging* metrik cakupan area (dalam persen) setiap interval waktu tertentu (misalnya 5 detik) ke dalam file `.csv`. [cite: 5, 10] [cite\_start]Setiap kamera memiliki file log harian sendiri, membuatnya mudah diakses dan dianalisis menggunakan tool standar seperti Excel tanpa memerlukan *database engine* yang berat. [cite: 5, 11] |
+| **Realtime Multi-Camera Monitoring** | Menampilkan *stream* video dari berbagai IP Camera melalui protokol RTSP secara bersamaan. Setiap status kamera (`Online`/`Offline`) dipantau secara aktif menggunakan *ping worker* di *thread* terpisah untuk memastikan UI tetap responsif. |
+| **Condition-Aware Analysis** | Melakukan deteksi cakupan material menggunakan *background subtraction* (MOG2) dari OpenCV. Tersedia berbagai *preset* deteksi (misalnya untuk kondisi malam, berdebu, atau bergetar) yang menyesuaikan parameter seperti `learningRate`, `shadows`, dan *morphology kernel* untuk akurasi maksimal dalam berbagai kondisi lapangan. |
+| **Interactive Visualization** | Visualisasi data disajikan secara *realtime*, termasuk *overlay* kontur hasil deteksi langsung di atas video stream dan grafik riwayat cakupan (coverage history) yang interaktif menggunakan QtCharts. |
+| **Autonomous CSV Logging** | Sistem melakukan *auto-logging* metrik cakupan area (dalam persen) setiap interval waktu tertentu (misalnya 5 detik) ke dalam file `.csv`. Setiap kamera memiliki file log harian sendiri, membuatnya mudah diakses dan dianalisis menggunakan tool standar seperti Excel tanpa memerlukan *database engine* yang berat. |
 
 ## 🧠 Core Concepts & Architecture
 
@@ -51,23 +51,23 @@ EyeLog dibangun di atas beberapa pilar arsitektur yang dirancang untuk performa 
 
 ### 1\. Non-Blocking UI by Design
 
-Antarmuka pengguna (UI) harus tetap responsif, bahkan saat memproses beberapa *stream* video. [cite\_start]Semua operasi berat—seperti *streaming* kamera, pemrosesan *frame*, *ping status*, dan pencatatan ke disk—dijalankan di **thread terpisah**. [cite: 15] [cite\_start]EyeLog menggunakan *thread pool* untuk mengelola *workers* ini secara dinamis, memastikan tidak ada *blocking call* di *main thread*. [cite: 15, 41]
+Antarmuka pengguna (UI) harus tetap responsif, bahkan saat memproses beberapa *stream* video. Semua operasi berat—seperti *streaming* kamera, pemrosesan *frame*, *ping status*, dan pencatatan ke disk—dijalankan di **thread terpisah**. EyeLog menggunakan *thread pool* untuk mengelola *workers* ini secara dinamis, memastikan tidak ada *blocking call* di *main thread*.
 
 ### 2\. Deep Dive: OpenCV Implementation
 
-Analisis visual adalah inti dari EyeLog. [cite\_start]Kami tidak menggunakan model Deep Learning yang berat, melainkan pendekatan matematis klasik dari OpenCV yang lebih ringan dan cepat untuk skenario ini. [cite: 51, 52]
+Analisis visual adalah inti dari EyeLog. Kami tidak menggunakan model Deep Learning yang berat, melainkan pendekatan matematis klasik dari OpenCV yang lebih ringan dan cepat untuk skenario ini.
 
-  * [cite\_start]**Background Subtraction (MOG2)**: Kami menggunakan algoritma MOG2 untuk memisahkan objek bergerak (*foreground*) dari latar belakang yang statis. [cite: 34] [cite\_start]Model latar belakang ini terus diperbarui, dan parameter seperti `history`, `varThreshold`, dan `learningRate` dapat disesuaikan melalui *preset* untuk beradaptasi dengan perubahan pencahayaan atau kondisi lainnya. [cite: 33]
-  * [cite\_start]**Morphology Operations**: Untuk membersihkan hasil deteksi, operasi morfologi seperti `Erode`, `Dilate`, `Opening`, dan `Closing` diterapkan. [cite: 30] [cite\_start]Ini digunakan baik sebagai *pre-processing* untuk membersihkan *noise* pada frame awal, maupun *post-processing* untuk menyempurnakan *mask foreground* sebelum analisis kontur. [cite: 29, 31]
-  * [cite\_start]**Contour Detection & Analysis**: Setelah mendapatkan *mask* biner dari *foreground*, kami mendeteksi kontur untuk mengidentifikasi setiap objek material. [cite: 38] [cite\_start]Kontur-kontur kecil disaring, dan kontur yang berdekatan dapat digabungkan untuk mendapatkan representasi area yang akurat, yang kemudian dihitung luasnya. [cite: 37]
+  * **Background Subtraction (MOG2)**: Kami menggunakan algoritma MOG2 untuk memisahkan objek bergerak (*foreground*) dari latar belakang yang statis. Model latar belakang ini terus diperbarui, dan parameter seperti `history`, `varThreshold`, dan `learningRate` dapat disesuaikan melalui *preset* untuk beradaptasi dengan perubahan pencahayaan atau kondisi lainnya. 
+  * **Morphology Operations**: Untuk membersihkan hasil deteksi, operasi morfologi seperti `Erode`, `Dilate`, `Opening`, dan `Closing` diterapkan. [cite: 30] Ini digunakan baik sebagai *pre-processing* untuk membersihkan *noise* pada frame awal, maupun *post-processing* untuk menyempurnakan *mask foreground* sebelum analisis kontur. 
+  * **Contour Detection & Analysis**: Setelah mendapatkan *mask* biner dari *foreground*, kami mendeteksi kontur untuk mengidentifikasi setiap objek material. Kontur-kontur kecil disaring, dan kontur yang berdekatan dapat digabungkan untuk mendapatkan representasi area yang akurat, yang kemudian dihitung luasnya.
 
 ### 3\. Architectural Choices (Tech Stack Justification)
 
 | Teknologi | Alasan Pemilihan |
 | :--- | :--- |
-| **Desktop App** | [cite\_start]Dipilih karena kebutuhan operasi **lokal dan *realtime***. [cite: 43] [cite\_start]Arsitektur web akan memperkenalkan latensi (kamera → server → klien) dan sangat tidak andal di lokasi dengan konektivitas internet terbatas. [cite: 43, 44] [cite\_start]Akses *hardware* langsung juga jauh lebih superior di lingkungan desktop. [cite: 45] |
-| **PySide6 (Qt)** | [cite\_start]Dipilih karena dukungan **multimedia dan *threading* yang kuat**, komponen UI yang modern dan lengkap, serta performa *rendering* yang lebih tinggi dibandingkan Tkinter. [cite: 48, 49, 50] [cite\_start]Kemampuannya untuk berjalan *cross-platform* dengan tampilan native adalah bonus besar. [cite: 47] |
-| **SQLite** | [cite\_start]Dipilih karena sifatnya yang **ringan, *serverless*, dan *embedded***. [cite: 53] [cite\_start]Sempurna untuk aplikasi *single-user* yang membutuhkan persistensi data sederhana (seperti daftar kamera) tanpa overhead dari *database engine* eksternal seperti PostgreSQL. [cite: 53] |
+| **Desktop App** | Dipilih karena kebutuhan operasi **lokal dan *realtime***. Arsitektur web akan memperkenalkan latensi (kamera → server → klien) dan sangat tidak andal di lokasi dengan konektivitas internet terbatas.  Akses *hardware* langsung juga jauh lebih superior di lingkungan desktop. |
+| **PySide6 (Qt)** | Dipilih karena dukungan **multimedia dan *threading* yang kuat**, komponen UI yang modern dan lengkap, serta performa *rendering* yang lebih tinggi dibandingkan Tkinter.  Kemampuannya untuk berjalan *cross-platform* dengan tampilan native adalah bonus besar.  |
+| **SQLite** | Dipilih karena sifatnya yang **ringan, *serverless*, dan *embedded***.  Sempurna untuk aplikasi *single-user* yang membutuhkan persistensi data sederhana (seperti daftar kamera) tanpa overhead dari *database engine* eksternal seperti PostgreSQL. |
 
 -----
 
@@ -104,7 +104,7 @@ Aplikasi ini sangat bergantung pada *multithreading* untuk menjaga performa. Ber
   * **Main Thread**: Hanya bertanggung jawab untuk me-*render* UI dan menangani interaksi pengguna.
   * **Stream Workers Thread**: Memproses *frame* yang diterima (analisis OpenCV) di *thread* terpisah.
   * **Ping Workers Thread**: Periodik memeriksa status koneksi setiap kamera.
-  * [cite\_start]**Coverage Logger Thread**: Menulis data cakupan ke file CSV secara asinkron agar tidak memblokir UI. [cite: 6]
+  * **Coverage Logger Thread**: Menulis data cakupan ke file CSV secara asinkron agar tidak memblokir UI. 
   * **Database Workers Thread**: Menangani semua operasi baca/tulis ke database SQLite.
 
 *(Anda bisa menyisipkan gambar flowchart Anda di sini)*

@@ -1,7 +1,7 @@
 # EyeLog: Realtime Computer Vision Monitoring
 
-[\![Python 3.12.10][https://img.shields.io/badge/Python-3.12-blue.svg]][https://www.python.org/downloads/release/python-31210/]
-[\![Latest Release][https://img.shields.io/github/v/release/raisal21/opencv_py_pdu]](https://github.com/raisal21/opencv-py-pdu/releases/tag/v1.0.0)
+[![Python 3.12.10](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/downloads/release/python-31210/)
+[![Latest Release](https://img.shields.io/github/v/release/raisal21/opencv_py_pdu)](https://github.com/raisal21/opencv-py-pdu/releases/tag/v1.0.0)
 
 **EyeLog** adalah sebuah aplikasi desktop robust yang dirancang untuk pemantauan kamera *realtime*, dilengkapi dengan analisis visual berbasis OpenCV dan antarmuka pengguna yang reaktif dan intuitif dibangun di atas PySide6. Aplikasi ini menawarkan solusi pemantauan visual yang andal, terutama untuk lingkungan industri dengan konektivitas terbatas di mana operasi lokal menjadi kunci.
 
@@ -107,8 +107,7 @@ Aplikasi ini sangat bergantung pada *multithreading* untuk menjaga performa. Ber
   * **Coverage Logger Thread**: Menulis data cakupan ke file CSV secara asinkron agar tidak memblokir UI. 
   * **Database Workers Thread**: Menangani semua operasi baca/tulis ke database SQLite.
 
-*(Anda bisa menyisipkan gambar flowchart Anda di sini)*
-`![Application Flowchart](https://raw.githubusercontent.com/raisal21/opencv-py-pdu/build_v1/flowchart/Eyelog-Flowchart.svg)`
+![Application Flowchart](flowchart/Eyelog-Flowchart.svg)
 
 ### How to Contribute
 

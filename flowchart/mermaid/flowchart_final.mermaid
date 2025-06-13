@@ -46,8 +46,8 @@ flowchart TD
     subgraph DetailCameraProcess [Detail Camera View Process]
         DetailCamera --> InitCamera[Inisialisasi Camera Object]
         InitCamera --> StartStream[Start Camera Stream Thread]
-        StartStream --> InitFrameProcessor[Mulai Frame Processor di Thread Terpisah] 
-        InitFrameProcessor --> ProcessFrame[Proses Frame dengan BG Subtraction\ndan Contour Detection]
+        StartStream --> InitStreamWorkers[Mulai Frame Processor di Thread Terpisah] 
+        InitStreamWorkers --> ProcessFrame[Proses Frame dengan BG Subtraction\ndan Contour Detection]
         ProcessFrame --> DisplayResults[Tampilkan Video\ndan Hasil Procesing]
         DisplayResults --> UpdateCoverage[Update Coverage Metrics]
         UpdateCoverage --> LogCoverageCSV[Log Hasil ke CSV File]
@@ -86,17 +86,15 @@ flowchart TD
     
     %% Background Process System - Updated
     subgraph WorkerThreads [Worker Threads]
-        CameraThread[Camera Streaming Thread]
-        FrameProcessorThread[Frame Processor Thread]
+        StreamWorkersThread[Frame Processor Thread]
         DBWorkerPool[Database Workers Thread Pool]
         PingWorkers[Ping Workers Thread Pool] 
         SnapshotWorkers[Snapshot Workers Thread Pool]
         CoverageLoggerThread[Coverage Logger Thread]
     end
     
-    DetailCamera -.-> CameraThread
-    CameraThread -.-> FrameProcessorThread
-    FrameProcessorThread --> BGSubtractor[Background Subtraction]
+    DetailCamera -.-> StreamWorkersThread
+    StreamWorkersThread --> BGSubtractor[Background Subtraction]
     BGSubtractor --> ContourProcessor[Contour Processing]
     ContourProcessor --> MetricsCalculation[Coverage Metrics Calculation]
     MetricsCalculation -.-> CoverageLoggerThread

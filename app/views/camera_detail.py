@@ -13,18 +13,18 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PySide6.QtCore import Qt, QThread, QSize, QRect, QTimer, QPropertyAnimation, QDateTime, QPointF, QMarginsF, QMargins, Slot, QUrl, QThreadPool
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QLinearGradient, QCursor, QIcon, QDesktopServices
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
-from resources import resource_path
-from models.camera import Camera, convert_cv_to_pixmap
+from ..resources import resource_path
+from ..models.camera import Camera, convert_cv_to_pixmap
 
 # Import material detector classes
-from utils.material_detector import (
+from ..utils.material_detector import (
     BG_PRESETS, 
     CONTOUR_PRESETS
 )
-from utils.coverage_logger import CoverageLogger
-from views.roi_window import ROISelectorDialog
-from utils.stream_worker import StreamWorker, StreamState
-from utils.db_worker import DBWorker, DBSignals
+from ..utils.coverage_logger import CoverageLogger
+from .roi_window import ROISelectorDialog
+from ..utils.stream_worker import StreamWorker, StreamState
+from ..utils.db_worker import DBWorker, DBSignals
 
 logger = logging.getLogger(__name__) 
 

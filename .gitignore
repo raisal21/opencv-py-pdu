@@ -1,9 +1,12 @@
-/.venv/
+/.venv
+/.venv312
+/.vs
 /resource/video_sample
 /__pycache__/
 /.pytest_cache
 /app/.pytest_cache
 /.mypy_cache/
+/release
 /dist
 /build
 /app/__pycache__/
@@ -15,3 +18,5 @@
 /logs
 /database
 /*.DS_Store
+/assets
+/resource

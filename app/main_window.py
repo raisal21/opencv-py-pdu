@@ -14,14 +14,14 @@ from shiboken6 import isValid
 from PySide6.QtCore import Qt, QSize, QTimer, Signal, QObject, QThread, QThreadPool, Slot
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap
 
-from resources import resource_path
-from models.camera import Camera, convert_cv_to_pixmap, CameraThread
-from views.add_camera import AddCameraDialog
-from views.camera_detail import CameraDetailUI
-from utils.log import setup as setup_log
-from utils.db_worker import DBWorker, DBSignals
-from utils.ping_scheduler import PingWorker
-from utils.preview_scheduler import SnapshotWorker, PreviewScheduler
+from .resources import resource_path
+from .models.camera import Camera, convert_cv_to_pixmap, CameraThread
+from .views.add_camera import AddCameraDialog
+from .views.camera_detail import CameraDetailUI
+from .utils.log import setup as setup_log
+from .utils.db_worker import DBWorker, DBSignals
+from .utils.ping_scheduler import PingWorker
+from .utils.preview_scheduler import SnapshotWorker, PreviewScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -726,7 +726,7 @@ class CameraList(QWidget):
                     widget.update_status(True)
                 found = True
                 break
-            
+
         if not found:
             pixmap = convert_cv_to_pixmap(frame, QSize(160, 90))
             if not pixmap.isNull():
@@ -759,9 +759,7 @@ class CameraList(QWidget):
             
             # Ping untuk update status
             worker = PingWorker(widget.camera_id, widget.ip_address, widget.port)
-            worker.signals.finished.connect(
-                lambda cid, ok: self._update_item_status(cid, ok)
-            )
+            worker.signals.finished.connect(self._update_item_status)
             self.ping_pool.start(worker)
     
     def showEvent(self, e):
@@ -780,14 +778,18 @@ class CameraList(QWidget):
         """Proper cleanup on close"""
         # Stop all timers
         self.ping_timer.stop()
+
+        if hasattr(self, 'preview_scheduler'):
+            self.preview_scheduler.cancel_all()
         
         # Wait for thread pools to finish
         self.db_pool.waitForDone(2000)
         self.ping_pool.waitForDone(2000)
         self.preview_pool.waitForDone(2000)
+        QThreadPool.globalInstance().waitForDone(2000)
         
         # Release video capture pool
-        from utils.preview_scheduler import _capture_pool
+        from .utils.preview_scheduler import _capture_pool
         _capture_pool.release_all()
         
         super().closeEvent(event)

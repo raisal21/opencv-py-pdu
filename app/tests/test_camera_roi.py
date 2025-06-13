@@ -8,7 +8,7 @@ Memastikan transform ROI bekerja & kasus tanpa ROI aman.
 import numpy as np
 import pytest
 
-from models.camera import Camera
+from ..models.camera import Camera
 
 # ---------------------------------------------------------------------------
 # FIXTURE – frame dummy 60×120 putih (BGR)

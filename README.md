@@ -108,7 +108,7 @@ Aplikasi ini sangat bergantung pada *multithreading* untuk menjaga performa. Ber
   * **Database Workers Thread**: Menangani semua operasi baca/tulis ke database SQLite.
 
 *(Anda bisa menyisipkan gambar flowchart Anda di sini)*
-`![Application Flowchart](flowchart/Eyelog-Flowchart.svg)`
+`![Application Flowchart](https://raw.githubusercontent.com/raisal21/opencv-py-pdu/main/flowchart/Eyelog-Flowchart.svg)`
 
 ### How to Contribute
 

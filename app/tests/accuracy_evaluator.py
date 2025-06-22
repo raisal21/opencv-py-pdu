@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3;
 """
 Robust accuracy evaluation & confusion‑matrix generator for EyeLog.
 

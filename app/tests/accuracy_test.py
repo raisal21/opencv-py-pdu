@@ -149,7 +149,7 @@ def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float,
 
 def evaluate_predictions(pred_paths: List[Path], labels_dir: Path, out_dir: Path, thr: float):
     try:
-        from accuracy_evaluator import evaluate_pair  # noqa: local module
+        from .accuracy_evaluator import evaluate_pair  # noqa: local module
     except ImportError:
         sys.stderr.write("[WARN] accuracy_evaluator.py not importable; skipping evaluation\n")
         return

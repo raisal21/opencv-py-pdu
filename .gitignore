@@ -20,5 +20,4 @@
 /*.DS_Store
 /assets
 /resource
-/preds/**.mp4
-/preds/**.avi
+/preds/**/**.mp4

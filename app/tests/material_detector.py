@@ -84,7 +84,6 @@ BG_PRESETS = {
         'background_ratio': 0.9
     },
     "shale-vibration": {
-        # — Stabilitas getaran —
         'history': 250,
         'learning_rate': 0.003,
         'var_threshold': 25,
@@ -666,57 +665,77 @@ def parse_arguments():
     
     args = parser.parse_args()
     
-    # Auto-disable visualisasi jika menyimpan video, kecuali user override
-    if args.save_video and not any(arg in os.sys.argv for arg in ["--hide-analysis", "--show-analysis"]):
-        args.hide_analysis = True
-
     return args
 
-# ----------------------
-# FUNGSI BANTUAN FILTER
-# ----------------------
-def filter_coverage(raw_cov: float) -> tuple[float, bool]:
-    global prev_cov
-    med_buf.append(raw_cov)
-    median_cov = np.median(med_buf)
-    ma_buf.append(median_cov)
-    ma_cov = float(sum(ma_buf) / len(ma_buf))
-    if prev_cov is None or abs(ma_cov - prev_cov) <= THR_REL * prev_cov:
-        coverage = ma_cov
-        prev_cov = ma_cov
-        spike = False
-    else:
-        coverage = prev_cov
-        spike = True
-    return coverage, spike
-
-# ----------------------
-# ENFORCE ASPECT RATIO
-# ----------------------
 def enforce_aspect_ratio(frame, target_ratio=2.35):
+    """
+    Crop frame to desired aspect ratio (e.g. 2.35:1).
+    Keeps center crop only.
+    """
     h, w = frame.shape[:2]
     current_ratio = w / h
+
     if abs(current_ratio - target_ratio) < 0.01:
-        return frame
+        return frame  # Already close to desired
+
     if current_ratio > target_ratio:
+        # Too wide -> crop width
         new_w = int(h * target_ratio)
         start_x = (w - new_w) // 2
         return frame[:, start_x:start_x + new_w]
     else:
+        # Too tall -> crop height
         new_h = int(w / target_ratio)
         start_y = (h - new_h) // 2
         return frame[start_y:start_y + new_h, :]
 
 # ----------------------
-# MAIN
+# FUNGSI BANTUAN FILTER
 # ----------------------
+
+def filter_coverage(raw_cov: float) -> tuple[float, bool]:
+    """Terapkan median → moving‑average → threshold gate.
+
+    Args:
+        raw_cov: coverage% mentah dari ContourProcessor.
+
+    Returns:
+        (coverage_sah, spike_flag)
+    """
+    global prev_cov  # gunakan state global sederhana (cukup untuk 1 stream)
+
+    # 1) Median filter
+    med_buf.append(raw_cov)
+    median_cov = np.median(med_buf)
+
+    # 2) Moving‑average
+    ma_buf.append(median_cov)
+    ma_cov = float(sum(ma_buf) / len(ma_buf))
+
+    # 3) Threshold‑based gate
+    if prev_cov is None or abs(ma_cov - prev_cov) <= THR_REL * prev_cov:
+        coverage = ma_cov
+        prev_cov = ma_cov
+        spike = False
+    else:
+        coverage = prev_cov  # tahan nilai lama
+        spike = True
+    return coverage, spike
+
+
+# ----------------------
+# MAIN LOOP (DIUBAH DI BAGIAN FILTER COVERAGE SAJA)
+# ----------------------
+
 def main():
     args = parse_arguments()
     cap = cv.VideoCapture(args.source)
     if not cap.isOpened():
         raise RuntimeError(f"Tidak bisa membuka video: {args.source}")
+
     if args.width: cap.set(cv.CAP_PROP_FRAME_WIDTH, args.width)
     if args.height: cap.set(cv.CAP_PROP_FRAME_HEIGHT, args.height)
+
     fg = ForegroundExtraction(**BG_PRESETS[args.bg_preset])
     ct = ContourProcessor(**CONTOUR_PRESETS[args.contour_preset])
 
@@ -742,6 +761,7 @@ def main():
             break
 
         ts_ms = int(cap.get(cv.CAP_PROP_POS_MSEC))
+
         fg_result = fg.process_frame(frame)
         contour_result = ct.process_mask(fg_result.binary)
         coverage = contour_result.metrics.get("contour_coverage_percent", 0.0)
@@ -750,25 +770,34 @@ def main():
             csv_writer.writerow([frame_idx, ts_ms, f"{coverage:.2f}"])
 
         disp = ct.visualize(frame, contour_result.contours, {})
-        cv.putText(disp, f"Coverage: {coverage:.1f}%", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+
+        cv.putText(disp, f"Coverage: {coverage:.1f}%", (10, 30),
+                cv.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
         if writer:
             writer.write(disp)
-        elif not args.hide_analysis:
-            disp = enforce_aspect_ratio(disp, target_ratio=args.display_ratio)
-            if args.display_scale != 1.0:
-                disp = cv.resize(disp, None, fx=args.display_scale, fy=args.display_scale, interpolation=cv.INTER_AREA)
-            cv.imshow("Preview", disp)
-            key = cv.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
+        else:
+            if not args.hide_analysis:
+                disp = enforce_aspect_ratio(disp, target_ratio=2.35)
+
+                # Scale preview if requested
+                if args.display_scale != 1.0:
+                    disp = cv.resize(disp, None, fx=args.display_scale, fy=args.display_scale, interpolation=cv.INTER_AREA)
+
+                cv.imshow("Preview", disp)
+                key = cv.waitKey(1) & 0xFF   # <-- WAJIB untuk merender window
+                if key == ord('q'):
+                    break
 
         frame_idx += 1
 
     cap.release()
-    if writer: writer.release()
-    if csv_writer: f_csv.close()
-    cv.destroyAllWindows(); cv.waitKey(1)
+    if writer:
+        writer.release()
+    if csv_writer:
+        f_csv.close()
+    cv.destroyAllWindows()
+    cv.waitKey(1)
 
 if __name__ == "__main__":
     main()

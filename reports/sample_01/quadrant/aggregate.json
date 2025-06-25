@@ -1,0 +1,46 @@
+[
+  {
+    "file": "ROI_01_quadrant_pred.json",
+    "mode": "quadrant",
+    "accuracy": 0.9894551845342706,
+    "report": {
+      "Q1": {
+        "precision": 0.9851024208566108,
+        "recall": 0.9981132075471698,
+        "f1-score": 0.9915651358950328,
+        "support": 530.0
+      },
+      "Q2": {
+        "precision": 0.9947183098591549,
+        "recall": 0.9843205574912892,
+        "f1-score": 0.989492119089317,
+        "support": 574.0
+      },
+      "Q3": {
+        "precision": 0.96875,
+        "recall": 0.9393939393939394,
+        "f1-score": 0.9538461538461539,
+        "support": 33.0
+      },
+      "Q4": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 1.0
+      },
+      "accuracy": 0.9894551845342706,
+      "macro avg": {
+        "precision": 0.9871426826789415,
+        "recall": 0.9804569261080996,
+        "f1-score": 0.983725852207626,
+        "support": 1138.0
+      },
+      "weighted avg": {
+        "precision": 0.9894915139834434,
+        "recall": 0.9894551845342706,
+        "f1-score": 0.989433147151633,
+        "support": 1138.0
+      }
+    }
+  }
+]

@@ -18,7 +18,7 @@ Highlights vs previous draft
 Example
 ~~~~~~~
 ```bash
-python run_accuracy_test.py \
+python accuracy_test.py \
     --videos-dir ./samples \
     --out-dir ./preds \
     --bg-preset default \
@@ -40,16 +40,17 @@ import numpy as np
 # Import the real detector components
 # ────────────────────────────────────────────────────────────────────────────────
 try:
-    from ..utils.material_detector import (
+    from .material_detector import (
         ForegroundExtraction,
         ContourProcessor,
         BG_PRESETS,
         CONTOUR_PRESETS,
+        filter_coverage,
     )
+    from . import material_detector as md
 except ImportError as err:  # pragma: no cover – easier debug on CI
     sys.stderr.write("[FATAL] Cannot import app.utils.material_detector.\n")
     raise err
-
 # ────────────────────────────────────────────────────────────────────────────────
 # CLI helpers
 # ────────────────────────────────────────────────────────────────────────────────
@@ -95,10 +96,17 @@ def _make_detector(bg_name: str, ct_name: str):
 
 
 def _process_frame(fg: ForegroundExtraction, ct: ContourProcessor, frame) -> float:
-    """Return coverage percent (0‑100) for the given frame."""
+    """Return *raw* coverage percent (0‑100) for the given frame.*"""
     fg_res = fg.process_frame(frame)
     ct_res = ct.process_mask(fg_res.binary)
     return ct_res.metrics.get("contour_coverage_percent", 0.0)
+
+
+def _reset_filter_state():
+    """Clear global buffers used by `filter_coverage` so each video starts fresh."""
+    md.med_buf.clear()         # type: ignore[attr‑defined]
+    md.ma_buf.clear()          # type: ignore[attr‑defined]
+    md.prev_cov = None         # type: ignore[attr‑defined]
 
 
 def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float, show: bool) -> Tuple[Path, float]:
@@ -110,6 +118,7 @@ def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float,
         raise RuntimeError(f"Cannot open {video_path}")
 
     fg, contour_proc = _make_detector(bg, ct)
+    _reset_filter_state()  # <‑‑ NEW: separate filter state per video
 
     start = time.perf_counter()
     frame_idx = 0
@@ -123,7 +132,8 @@ def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float,
             if not ret:
                 break
 
-            cov = _process_frame(fg, contour_proc, frame)
+            raw_cov = _process_frame(fg, contour_proc, frame)
+            cov, _spike = filter_coverage(raw_cov)  # <‑‑ NEW: apply spike filter
             pred_label = int(cov >= thr)
             ts_ms = int(cap.get(cv.CAP_PROP_POS_MSEC))
             writer.writerow([frame_idx, ts_ms, f"{cov:.2f}", pred_label])
@@ -144,10 +154,13 @@ def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float,
     return csv_path, fps
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Evaluation wrapper
+# Evaluation wrapper (unchanged)
 # ────────────────────────────────────────────────────────────────────────────────
 
+from .accuracy_evaluator import evaluate_pair  # kept import at module level for simplicity
+
 def evaluate_predictions(pred_paths: List[Path], labels_dir: Path, out_dir: Path, thr: float):
+    # body identical to previous revision … (no change needed)
     try:
         from .accuracy_evaluator import evaluate_pair  # noqa: local module
     except ImportError:
@@ -169,7 +182,7 @@ def evaluate_predictions(pred_paths: List[Path], labels_dir: Path, out_dir: Path
         print("[INFO] aggregate_metrics.json saved")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Main
+# Main entrypoint (unchanged apart from note)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def main():

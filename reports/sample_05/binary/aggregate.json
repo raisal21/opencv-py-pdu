@@ -1,0 +1,34 @@
+[
+  {
+    "file": "ROI_05_binary_pred.json",
+    "mode": "binary",
+    "accuracy": 0.8985507246376812,
+    "report": {
+      "NoMaterial": {
+        "precision": 1.0,
+        "recall": 0.8292682926829268,
+        "f1-score": 0.9066666666666666,
+        "support": 41.0
+      },
+      "Material": {
+        "precision": 0.8,
+        "recall": 1.0,
+        "f1-score": 0.8888888888888888,
+        "support": 28.0
+      },
+      "accuracy": 0.8985507246376812,
+      "macro avg": {
+        "precision": 0.9,
+        "recall": 0.9146341463414633,
+        "f1-score": 0.8977777777777778,
+        "support": 69.0
+      },
+      "weighted avg": {
+        "precision": 0.918840579710145,
+        "recall": 0.8985507246376812,
+        "f1-score": 0.899452495974235,
+        "support": 69.0
+      }
+    }
+  }
+]

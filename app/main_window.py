@@ -156,7 +156,7 @@ class CameraItem(QFrame):
         self.preview_widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         
         # Set gambar preview jika ada
-        if preview_image:
+        if preview_image is not None:
             self.set_preview(preview_image)
         else:
             # Preview text

@@ -18,6 +18,7 @@ from .resources import resource_path
 from .models.camera import Camera, convert_cv_to_pixmap, CameraThread
 from .views.add_camera import AddCameraDialog
 from .views.camera_detail import CameraDetailUI
+from .views.camera_detail_static import CameraDetailUI_Static
 from .utils.log import setup as setup_log
 from .utils.db_worker import DBWorker, DBSignals
 from .utils.ping_scheduler import PingWorker
@@ -120,7 +121,8 @@ class CameraItem(QFrame):
         self.password = password
         self.stream_path = stream_path
         self.url = url
-        self.is_online = is_online        
+        self.is_online = is_online
+        self.is_static = is_static  
         # Konfigurasi frame
         self.setFrameShape(QFrame.StyledPanel)
         self.setFrameShadow(QFrame.Raised)
@@ -247,6 +249,13 @@ class CameraItem(QFrame):
             }
         """)
         delete_button.clicked.connect(self.on_delete_clicked)
+        if self.is_static:
+            edit_button.setEnabled(False)
+            delete_button.setEnabled(False)
+            edit_button.setToolTip("Cannot edit a static camera")
+            delete_button.setToolTip("Cannot delete a static camera")
+            edit_button.setStyleSheet("background-color: #3F3F46; color: #71717A;")
+            delete_button.setStyleSheet("background-color: #3F3F46; color: #71717A;")
         
         buttons_inner_layout.addWidget(edit_button)
         buttons_inner_layout.addStretch()
@@ -259,6 +268,9 @@ class CameraItem(QFrame):
         layout.addLayout(buttons_layout)
         
         self._status_worker: CameraStatusWorker | None = None
+
+        if self.is_static:
+            self.update_status(True)
     
     def set_preview(self, image):
         """
@@ -288,6 +300,13 @@ class CameraItem(QFrame):
             self.preview_widget.setStyleSheet("border-radius: 4px;")
 
     def update_status(self, is_online: bool):
+
+        if self.is_static:
+            self.is_online = True
+            self.status_label.setText("Status: Online")
+            self.status_label.setStyleSheet(f"font-size: 14px; color: #4CAF50; border: 0px;")
+            return
+
         self.is_online = is_online
         status_color = "#4CAF50" if is_online else "#9CA3AF"
         status_text  = "Online"   if is_online else "Offline"
@@ -452,16 +471,58 @@ class CameraList(QWidget):
         worker = DBWorker(signals, "get_all_cameras")
         QThreadPool.globalInstance().start(worker)
 
+    # --- METHOD BARU YANG HILANG ---
+    def _load_static_cameras(self):
+        """Membaca file static_cameras.json dan mengembalikan list of dict."""
+        static_cameras = []
+        try:
+            static_path = resource_path("app/assets/static_cameras.json")
+            if os.path.exists(static_path):
+                with open(static_path, 'r', encoding='utf-8') as f:
+                    static_cameras = json.load(f)
+        except Exception as e:
+            logger.error(f"Gagal memuat kamera statis: {e}")
+        return static_cameras
+
+    # --- METHOD BARU YANG HILANG ---
+    def _get_static_preview(self, video_path):
+        """Mendapatkan frame pertama dari video sebagai preview."""
+        try:
+            # Pastikan path menggunakan separator yang benar untuk OS
+            video_path = os.path.normpath(video_path)
+            if not os.path.exists(video_path):
+                logger.warning(f"Static video file not found at: {video_path}")
+                return None
+            
+            cap = cv.VideoCapture(video_path)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret:
+                    return frame
+        except Exception as e:
+            logger.error(f"Gagal mendapatkan preview dari {video_path}: {e}")
+        return None
+
     def _populate_camera_list(self, cameras):
         """Populate camera list dan trigger initial snapshots"""
-        if not cameras:
-            self._show_empty_state()
-            return
 
         self._hide_empty_label()
 
-        for camera_data in cameras:
+        # Gabungkan kamera dari DB dan file statis
+        all_cameras = cameras + self._load_static_cameras()
+
+        if not all_cameras:
+            self._show_empty_state()
+            return
+
+        for camera_data in all_cameras:
+            is_static = camera_data.get('is_static', False)
             preview = self.preview_cache.get(camera_data['id'], None)
+            if is_static and preview is None:
+                preview = self._get_static_preview(camera_data.get('video_path'))
+                if preview is not None:
+                    self.preview_cache[camera_data['id']] = convert_cv_to_pixmap(preview, QSize(160, 90))
             camera_item = CameraItem(
                 camera_id=camera_data['id'],
                 camera_name=camera_data['name'],
@@ -472,7 +533,7 @@ class CameraList(QWidget):
                 password=camera_data['password'],
                 stream_path=camera_data['stream_path'],
                 url=camera_data['url'],
-                is_online=False,
+                is_online=is_static,
                 preview_image=preview if preview is not None else None
             )
             camera_item.camera_clicked.connect(self.open_camera_detail)
@@ -483,9 +544,9 @@ class CameraList(QWidget):
             # Store camera instance
             self.active_cameras[camera_data['id']] = Camera.from_dict(camera_data)
             
-            # Request ONE-TIME snapshot untuk camera ini
-            self._request_initial_snapshot(camera_data['id'])
-    
+            if not is_static:
+                self._request_initial_snapshot(camera_data['id'])
+
     def _request_initial_snapshot(self, camera_id: int):
         """Request snapshot SEKALI untuk camera saat pertama kali dimuat"""
         if camera_id in self.snapshot_done:
@@ -1017,30 +1078,51 @@ class MainWindow(QMainWindow):
             )
     
     def open_camera_detail(self, camera_id):
-        """Membuka halaman detail kamera, mengambil data secara asinkron."""
-        
-        # Mengambil data kamera menggunakan worker
-        signals = DBSignals()
-        
-        # Setelah data diterima, buka jendela detail
-        @Slot(dict)
-        def _on_data_received(camera_data):
-            if camera_data:
-                self.pause_background_tasks()
-                
-                detail_window = CameraDetailUI(camera_data, parent=self)
-                detail_window.destroyed.connect(self.resume_background_tasks)
-                
-                self.hide()
-                detail_window.show()
-            else:
-                QMessageBox.warning(self, "Camera Not Found", f"Camera with ID {camera_id} not found.")
+        """
+        Membuka halaman detail kamera.
+        - Untuk kamera statis (ID < 0), buka secara langsung.
+        - Untuk kamera DB (ID > 0), ambil data secara asinkron.
+        """
+        # --- PATH 1: Untuk kamera statis (ID negatif, sinkron) ---
+        if camera_id < 0:
+            camera_obj = self.camera_list.active_cameras.get(camera_id)
+            if not camera_obj:
+                QMessageBox.warning(self, "Camera Not Found", f"Static camera with ID {camera_id} not found.")
+                return
 
-        signals.finished.connect(_on_data_received)
-        signals.error.connect(self._db_error_msg)
-        
-        worker = DBWorker(signals, "get_camera", camera_id)
-        QThreadPool.globalInstance().start(worker)
+            self.pause_background_tasks()
+            
+            # Buka view statis yang disederhanakan
+            detail_window = CameraDetailUI_Static(camera_obj.__dict__, parent=self)
+            detail_window.destroyed.connect(self.resume_background_tasks)
+            self.hide()
+            detail_window.show()
+
+        # --- PATH 2: Untuk kamera dari database (ID positif, asinkron seperti asli) ---
+        else:
+            # [cite_start]Menggunakan pola worker dan sinyal seperti kode asli [cite: 146, 149]
+            signals = DBSignals()
+            
+            @Slot(dict)
+            def _on_data_received(camera_data):
+                if camera_data:
+                    self.pause_background_tasks()
+                    
+                    # Buka view normal yang memiliki fungsionalitas penuh
+                    detail_window = CameraDetailUI(camera_data, parent=self)
+                    detail_window.destroyed.connect(self.resume_background_tasks)
+                    
+                    self.hide()
+                    detail_window.show()
+                else:
+                    QMessageBox.warning(self, "Camera Not Found", f"Camera with ID {camera_id} not found in database.")
+
+            signals.finished.connect(_on_data_received)
+            signals.error.connect(self._db_error_msg)
+            
+            # Worker memanggil "get_camera" dari DB untuk ID positif
+            worker = DBWorker(signals, "get_camera", camera_id)
+            QThreadPool.globalInstance().start(worker)
 
     @Slot(str)
     def _db_error_msg(self, error_message: str):

@@ -9,7 +9,7 @@ def SplashScreen() -> QSplashScreen:
     Splash screen dengan ukuran tetap seperti QGIS (500x300), gambar auto-scale.
     """
 
-    image_path = resource_path("assets/images/EyelogSplashScreen.png")
+    image_path = resource_path("app/assets/images/EyelogSplashScreen.png")
     pixmap = QPixmap(image_path)
 
     if pixmap.isNull():

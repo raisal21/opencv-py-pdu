@@ -45,6 +45,8 @@ class Camera:
         self.password = password
         self.stream_path = stream_path
         self.custom_url = custom_url
+        self.is_static = False
+        self.video_path = video_path
         # Status dan resource kamera
         self.connection_status = False
         self.capture = None
@@ -73,7 +75,9 @@ class Camera:
         Returns:
         String URL untuk koneksi ke kamera
         """
-
+        if self.protocol == 'FILE' and self.custom_url:
+            return self.custom_url
+            
         # Jika custom URL tersedia, gunakan itu
         if self.custom_url and self.custom_url.strip():
             return self.custom_url.strip()
@@ -105,17 +109,20 @@ class Camera:
             
             # Coba koneksi baru
             url = self.build_stream_url()
-            
-            open_timeout_ms = 3000
-            params = [cv.CAP_PROP_OPEN_TIMEOUT_MSEC, open_timeout_ms]
+            # Jika statis, tidak perlu timeout
+            if self.is_static:
+                self.capture = cv.VideoCapture(url)
+            else:
+                open_timeout_ms = 3000
+                params = [cv.CAP_PROP_OPEN_TIMEOUT_MSEC, open_timeout_ms]
 
-            try:
-                self.capture = cv.VideoCapture(url, cv.CAP_FFMPEG, params)
-                if hasattr(cv, "CAP_PROP_THREAD_COUNT"):
-                    self.capture.set(cv.CAP_PROP_THREAD_COUNT, 1)
-            except (cv.error, AttributeError):
-                logging.warning("CAP_PROP_OPEN_TIMEOUT_MSEC tidak tersedia — memakai fallback tanpa timeout")
-                self.capture = cv.VideoCapture(url, cv.CAP_FFMPEG)
+                try:
+                    self.capture = cv.VideoCapture(url, cv.CAP_FFMPEG, params)
+                    if hasattr(cv, "CAP_PROP_THREAD_COUNT"):
+                        self.capture.set(cv.CAP_PROP_THREAD_COUNT, 1)
+                except (cv.error, AttributeError):
+                    logging.warning("CAP_PROP_OPEN_TIMEOUT_MSEC tidak tersedia — memakai fallback tanpa timeout")
+                    self.capture = cv.VideoCapture(url, cv.CAP_FFMPEG)
             
             # Verifikasi koneksi
             if self.capture.isOpened():
@@ -313,7 +320,9 @@ class Camera:
             username=data.get('username', ''),
             password=data.get('password', ''),
             stream_path=data.get('stream_path', 'stream1'),
-            custom_url=data.get('url', '')  # 'url' dalam database = custom_url
+            custom_url=data.get('url', ''),
+            is_static=data.get('is_static', False),
+            video_path=data.get('video_path', '')
         )
     
         if 'resolution' in data:
@@ -384,7 +393,7 @@ class CameraThread(QThread):
         """
         self.running = True
         consecutive_errors = 0
-        frame_counter = 0  # TAMBAH INI
+        frame_counter = 0
         start_time = time.time()
         
         while self.running:
@@ -423,7 +432,6 @@ class CameraThread(QThread):
                                             except Exception as e:
                                                 logger.error(f"Failed to release capture: {e}")
                                     
-                                    # TAMBAH: Exponential backoff untuk reconnect
                                     self.camera.reconnect_interval = min(60, self.camera.reconnect_interval * 2)
                 else:
                     # Coba reconnect otomatis

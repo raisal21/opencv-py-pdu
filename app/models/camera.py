@@ -21,7 +21,7 @@ class Camera:
     Menangani koneksi, streaming, dan status kamera.
     """
     def __init__(self, camera_id=None, name="Untitled Camera", ip_address="0.0.0.0", port=554,
-                 username="", password="", stream_path="stream1", custom_url=None):
+                 username="", password="", stream_path="stream1", custom_url=None, is_static=False, video_path=""):
         """
         Inisialisasi objek kamera baru.
         
@@ -45,7 +45,7 @@ class Camera:
         self.password = password
         self.stream_path = stream_path
         self.custom_url = custom_url
-        self.is_static = False
+        self.is_static = is_static
         self.video_path = video_path
         # Status dan resource kamera
         self.connection_status = False
@@ -349,8 +349,6 @@ class Camera:
         self.is_preview_mode = enable
         new_fps = FPS_PREVIEW if enable else FPS_DETAIL
         self.thread.set_target_fps(new_fps)
-
-
 
 
 class CameraThread(QThread):

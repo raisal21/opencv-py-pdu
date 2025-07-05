@@ -109,7 +109,7 @@ class CameraItem(QFrame):
     
     def __init__(self, camera_id, camera_name, ip_address, port, protocol='RTSP',
                  username='', password='', stream_path='', url='',
-                 is_online=False, preview_image=None, parent=None):
+                 is_online=False, preview_image=None, parent=None, is_static=False):
         super().__init__(parent)
         
         self.camera_id = camera_id
@@ -534,7 +534,8 @@ class CameraList(QWidget):
                 stream_path=camera_data['stream_path'],
                 url=camera_data['url'],
                 is_online=is_static,
-                preview_image=preview if preview is not None else None
+                preview_image=preview if preview is not None else None,
+                is_static=is_static,
             )
             camera_item.camera_clicked.connect(self.open_camera_detail)
             camera_item.edit_clicked.connect(self.edit_camera)

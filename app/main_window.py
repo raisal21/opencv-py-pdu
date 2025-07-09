@@ -55,7 +55,7 @@ class DeleteCameraDialog(QDialog):
         
         # Ikon peringatan   
         icon_label = QLabel()
-        icon_label.setPixmap(QIcon(resource_path("assets/icons/warning.png")).pixmap(QSize(48, 48)))
+        icon_label.setPixmap(QIcon(resource_path("app/assets/icons/warning.png")).pixmap(QSize(48, 48)))
         icon_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_label)
         
@@ -219,7 +219,7 @@ class CameraItem(QFrame):
         buttons_inner_layout.setSpacing(16)
         
         edit_button = QPushButton()
-        edit_button.setIcon(QIcon(resource_path("assets/icons/edit.png")))
+        edit_button.setIcon(QIcon(resource_path("app/assets/icons/edit.png")))
         edit_button.setIconSize(QSize(20, 20))
         edit_button.setFixedSize(40, 40)
         edit_button.setStyleSheet("""
@@ -235,7 +235,7 @@ class CameraItem(QFrame):
         edit_button.clicked.connect(self.on_edit_clicked)
         
         delete_button = QPushButton()
-        delete_button.setIcon(QIcon(resource_path("assets/icons/trash.png")))
+        delete_button.setIcon(QIcon(resource_path("app/assets/icons/trash.png")))
         delete_button.setIconSize(QSize(25, 25))
         delete_button.setFixedSize(40, 40)
         delete_button.setStyleSheet("""
@@ -254,8 +254,6 @@ class CameraItem(QFrame):
             delete_button.setEnabled(False)
             edit_button.setToolTip("Cannot edit a static camera")
             delete_button.setToolTip("Cannot delete a static camera")
-            edit_button.setStyleSheet("background-color: #3F3F46; color: #71717A;")
-            delete_button.setStyleSheet("background-color: #3F3F46; color: #71717A;")
         
         buttons_inner_layout.addWidget(edit_button)
         buttons_inner_layout.addStretch()
@@ -880,7 +878,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("EyeLog - Camera Monitoring")
         self.setMinimumSize(800, 600)
         self.setStyleSheet("background-color: #09090B;")
-        self.setWindowIcon(QIcon(resource_path("assets/icons/pdu.png")))
+        self.setWindowIcon(QIcon(resource_path("app/assets/icons/pdu.png")))
 
         # Central widget
         central_widget = QWidget()
@@ -903,7 +901,7 @@ class MainWindow(QMainWindow):
 
         # Title icon and text for header
         header_icon_label = QLabel()
-        icon_pixmap = QIcon(resource_path("assets/icons/pdu.png")).pixmap(QSize(30, 30))
+        icon_pixmap = QIcon(resource_path("app/assets/icons/pdu.png")).pixmap(QSize(30, 30))
         if not icon_pixmap.isNull():
             header_icon_label.setPixmap(icon_pixmap)
         else:
@@ -918,7 +916,7 @@ class MainWindow(QMainWindow):
 
         # Clock widgets icon and text
         clock_icon_label = QLabel()
-        clock_icon_pixmap = QIcon(resource_path("assets/icons/clock.png")).pixmap(QSize(18, 18))
+        clock_icon_pixmap = QIcon(resource_path("app/assets/icons/clock.png")).pixmap(QSize(18, 18))
         if not clock_icon_pixmap.isNull():
             clock_icon_label.setPixmap(clock_icon_pixmap)
         
@@ -928,7 +926,7 @@ class MainWindow(QMainWindow):
         # Notification button icon
         notification_button = QPushButton()
         notification_button.setFixedSize(35, 35)
-        notification_button.setIcon(QIcon(resource_path("assets/icons/bell.png")))
+        notification_button.setIcon(QIcon(resource_path("app/assets/icons/bell.png")))
         notification_button.setIconSize(QSize(20, 20))
         notification_button.setStyleSheet("""
             QPushButton {
@@ -985,7 +983,7 @@ class MainWindow(QMainWindow):
                 border: 1px solid #EA580C;
             }
         """)
-        self.add_camera_button.setIcon(QIcon(resource_path("assets/icons/plus.png")))
+        self.add_camera_button.setIcon(QIcon(resource_path("app/assets/icons/plus.png")))
         self.add_camera_button.setIconSize(QSize(18, 18))
         self.add_camera_button.clicked.connect(self.show_add_camera_dialog)
 

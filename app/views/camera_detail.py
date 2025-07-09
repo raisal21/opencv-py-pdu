@@ -271,7 +271,7 @@ class CameraDetailUI(QMainWindow):
         ]
 
         self.setWindowTitle(f"Camera Detail - {camera_data['name']}")
-        self.setWindowIcon(QIcon(resource_path("assets/icons/webcam.png")))
+        self.setWindowIcon(QIcon(resource_path("app/assets/icons/webcam.png")))
         self.resize(1000, 700)
         
         # Central widget and main layout
@@ -292,7 +292,7 @@ class CameraDetailUI(QMainWindow):
         
         # Back button
         back_button = QPushButton("Back")
-        back_button.setIcon(QIcon(resource_path("assets/icons/back.png")))
+        back_button.setIcon(QIcon(resource_path("app/assets/icons/back.png")))
         back_button.setIconSize(QSize(18, 18))
         back_button.setStyleSheet("""
             QPushButton {
@@ -416,7 +416,7 @@ class CameraDetailUI(QMainWindow):
         button_row.setSpacing(8)
         
         self.edit_roi_button = QPushButton("Edit ROI")
-        self.edit_roi_button.setIcon(QIcon(resource_path("assets/icons/edit.png")))
+        self.edit_roi_button.setIcon(QIcon(resource_path("app/assets/icons/edit.png")))
         self.edit_roi_button.setIconSize(QSize(18, 18))
         self.edit_roi_button.setMinimumHeight(35)
         self.edit_roi_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -435,7 +435,7 @@ class CameraDetailUI(QMainWindow):
         button_row.addWidget(self.edit_roi_button, 1)
 
         data_logs_button = QPushButton("Logs Folder")
-        data_logs_button.setIcon(QIcon(resource_path("assets/icons/logs.png")))
+        data_logs_button.setIcon(QIcon(resource_path("app/assets/icons/logs.png")))
         data_logs_button.setIconSize(QSize(18, 18))
         data_logs_button.setMaximumHeight(35)
         data_logs_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)

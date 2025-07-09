@@ -3,15 +3,17 @@ import cv2 as cv
 import numpy as np
 import logging
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
-from ..utils.material_detector import ForegroundExtraction, ContourProcessor, BG_PRESETS, CONTOUR_PRESETS
+from ..resources import resource_path # Impor untuk mendapatkan path absolut
+from ..utils.material_detector_static import ForegroundExtraction, ContourProcessor, BG_PRESETS, CONTOUR_PRESETS
 
 logger = logging.getLogger(__name__)
 
 class StreamWorkerStatic(QThread):
     """
-    Worker yang disederhanakan untuk memproses video dari file lokal secara berulang (loop).
+    Worker yang disederhanakan untuk memproses video dari file lokal secara berulang.
+    MODIFIED: Menambahkan kemampuan untuk memperbarui preset secara dinamis.
     """
-    frame_ready = Signal(np.ndarray, dict)  # (processed_frame, metrics)
+    frame_ready = Signal(np.ndarray, dict)
     error_occurred = Signal(str)
 
     def __init__(self, camera, parent=None):
@@ -19,35 +21,67 @@ class StreamWorkerStatic(QThread):
         self.camera = camera
         self._stop_flag = False
         self._mutex = QMutex()
+
+        # Mutex untuk melindungi akses ke parameter preset
+        self._params_mutex = QMutex()
+        self._pending_bg_params = None
+        self._pending_contour_params = None
         
-        # Gunakan preset default untuk demo
-        self.bg_subtractor = ForegroundExtraction(**BG_PRESETS["default"])
-        self.contour_processor = ContourProcessor(**CONTOUR_PRESETS["standard"])
+        # Inisialisasi prosesor dengan preset default
+        self._initialize_processors(BG_PRESETS["default"], CONTOUR_PRESETS["standard"])
+
+    def _initialize_processors(self, bg_params, contour_params):
+        """Inisialisasi atau re-inisialisasi prosesor deteksi."""
+        self.bg_subtractor = ForegroundExtraction(**bg_params)
+        self.contour_processor = ContourProcessor(**contour_params)
+        logger.info("Detection processors initialized/updated.")
 
     def run(self):
-        video_path = self.camera.video_path
-        cap = cv.VideoCapture(video_path)
+        """Loop utama thread untuk membaca dan memproses video."""
+        video_path_abs = resource_path(self.camera.video_path)
+        cap = cv.VideoCapture(video_path_abs)
 
         if not cap.isOpened():
-            self.error_occurred.emit(f"Gagal membuka file video: {video_path}")
+            self.error_occurred.emit(f"Gagal membuka file video: {video_path_abs}")
             return
 
         while not self._is_stopping():
+            # Terapkan pembaruan preset sebelum memproses frame berikutnya
+            self._apply_pending_preset_updates()
+
             ret, frame = cap.read()
             if not ret:
-                # Jika video selesai, putar ulang dari awal
                 cap.set(cv.CAP_PROP_POS_FRAMES, 0)
                 continue
 
-            # Proses frame
             processed_frame, metrics = self._process_frame(frame)
             self.frame_ready.emit(processed_frame, metrics)
             
-            # Kontrol FPS sederhana
             time.sleep(1 / 15) # Target ~15 FPS
 
         cap.release()
         logger.info("Static StreamWorker stopped.")
+
+    def _apply_pending_preset_updates(self):
+        """Secara thread-safe menerapkan parameter preset yang baru."""
+        bg_params_to_apply = None
+        contour_params_to_apply = None
+
+        with QMutexLocker(self._params_mutex):
+            if self._pending_bg_params:
+                bg_params_to_apply = self._pending_bg_params
+                self._pending_bg_params = None
+            
+            if self._pending_contour_params:
+                contour_params_to_apply = self._pending_contour_params
+                self._pending_contour_params = None
+        
+        # Re-inisialisasi di luar lock untuk menghindari deadlock
+        if bg_params_to_apply or contour_params_to_apply:
+            # Gunakan parameter yang ada jika salah satunya tidak diupdate
+            current_bg_params = bg_params_to_apply or self.bg_subtractor.get_params()
+            current_contour_params = contour_params_to_apply or self.contour_processor.get_params()
+            self._initialize_processors(current_bg_params, current_contour_params)
 
     def _process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict]:
         """Memproses satu frame video."""
@@ -63,6 +97,16 @@ class StreamWorkerStatic(QThread):
         )
         return display_frame, contour_result.metrics
 
+    def set_bg_params(self, params: dict):
+        """Metode publik untuk UI thread mengatur parameter BG baru."""
+        with QMutexLocker(self._params_mutex):
+            self._pending_bg_params = params
+
+    def set_contour_params(self, params: dict):
+        """Metode publik untuk UI thread mengatur parameter Contour baru."""
+        with QMutexLocker(self._params_mutex):
+            self._pending_contour_params = params
+
     def stop(self):
         with QMutexLocker(self._mutex):
             self._stop_flag = True
@@ -70,3 +114,4 @@ class StreamWorkerStatic(QThread):
     def _is_stopping(self):
         with QMutexLocker(self._mutex):
             return self._stop_flag
+

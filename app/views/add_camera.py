@@ -65,7 +65,7 @@ class AddCameraDialog(QDialog):
         
         # Set dialog properties
         self.setWindowTitle("Edit Camera" if self.edit_mode else "Add Camera")
-        self.setWindowIcon(QIcon(resource_path("assets/icons/webcam.png")))
+        self.setWindowIcon(QIcon(resource_path("app/assets/icons/webcam.png")))
         self.setMinimumSize(500, 400)  
         self.setStyleSheet("""
             QDialog {
@@ -135,7 +135,7 @@ class AddCameraDialog(QDialog):
         # Close button
         close_button = QPushButton()
         close_button.setFixedSize(35, 35)
-        close_button.setIcon(QIcon(resource_path("assets/icons/close.png")))
+        close_button.setIcon(QIcon(resource_path("app/assets/icons/close.png")))
         close_button.setIconSize(QSize(16, 16))
         close_button.setStyleSheet("""
             QPushButton {
@@ -310,7 +310,7 @@ class AddCameraDialog(QDialog):
                 border: 1px solid #EA580C;
             }
         """)
-        self.save_button.setIcon(QIcon(resource_path("assets/icons/arrow-right.png")))
+        self.save_button.setIcon(QIcon(resource_path("app/assets/icons/arrow-right.png")))
         self.save_button.setIconSize(QSize(18, 18))
         self.save_button.clicked.connect(self.validate_and_accept)
         

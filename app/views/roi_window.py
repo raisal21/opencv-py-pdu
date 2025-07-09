@@ -26,7 +26,7 @@ class ROISelectorDialog(QDialog):
         
         # Set dialog properties
         self.setWindowTitle("Select ROI")
-        self.setWindowIcon(QIcon(resource_path("assets/icons/crop.png")))
+        self.setWindowIcon(QIcon(resource_path("app/assets/icons/crop.png")))
         self.setMinimumSize(800, 600)
         self.setStyleSheet("""
             QDialog {

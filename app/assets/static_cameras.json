@@ -1,7 +1,7 @@
 [
   {
     "id": -1,
-    "name": "Sample Video 01 (Static)",
+    "name": "CAM-DEMO-01",
     "is_static": true,
     "video_path": "C:/Users/PC-Windows/Documents/GitHub/opencv-py-pdu/resource/video_dir/sample_01/ROI_01.mp4",
     "ip_address": "local",
@@ -14,7 +14,7 @@
   },
   {
     "id": -2,
-    "name": "Sample Video 02 (Static)",
+    "name": "CAM-DEMO-02",
     "is_static": true,
     "video_path": "C:/Users/PC-Windows/Documents/GitHub/opencv-py-pdu/resource/video_dir/sample_02/ROI_02.mp4",
     "ip_address": "local",
@@ -24,5 +24,31 @@
     "password": "",
     "stream_path": "",
     "url": "C:/Users/PC-Windows/Documents/GitHub/opencv-py-pdu/resource/video_dir/sample_02/ROI_02.mp4"
+  },
+  {
+    "id": -3,
+    "name": "CAM-DEMO-03",
+    "is_static": true,
+    "video_path": "C:/Users/PC-Windows/Documents/GitHub/opencv-py-pdu/resource/video_dir/sample_03/ROI_03_CUT_HD.mp4",
+    "ip_address": "local",
+    "port": 0,
+    "protocol": "FILE",
+    "username": "",
+    "password": "",
+    "stream_path": "",
+    "url": "C:/Users/PC-Windows/Documents/GitHub/opencv-py-pdu/resource/video_dir/sample_03/ROI_03_CUT_HD.mp4"
+  },
+  {
+    "id": -4,
+    "name": "CAM-DEMO-04",
+    "is_static": true,
+    "video_path": "C:/Users/PC-Windows/Documents/GitHub/opencv-py-pdu/resource/video_dir/sample_05/ROI_05.mp4",
+    "ip_address": "local",
+    "port": 0,
+    "protocol": "FILE",
+    "username": "",
+    "password": "",
+    "stream_path": "",
+    "url": "C:/Users/PC-Windows/Documents/GitHub/opencv-py-pdu/resource/video_dir/sample_05/ROI_05.mp4"
   }
 ]

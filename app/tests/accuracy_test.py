@@ -24,7 +24,6 @@ python accuracy_test.py \
     --bg-preset default \
     --contour-preset standard \
     --coverage-threshold 5.0 \
-    --labels-dir ./annotations
 ```
 """
 from __future__ import annotations

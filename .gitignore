@@ -1,6 +1,7 @@
 /.venv
 /.venv312
 /.vs
+/.vscode
 /resource/video_sample
 /__pycache__/
 /.pytest_cache

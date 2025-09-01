@@ -179,7 +179,7 @@ class ForegroundExtraction:
             pre_kernel_size: Kernel size for pre-processing operations
             pre_iterations: Number of iterations for pre-processing
             post_process: Morphological operation after background subtraction
-            post_kernel_size: Kernel size for post-processing operations
+            post_kernel_size: Kernel size for post-processing
             post_iterations: Number of iterations for post-processing
         """
         # Initialize parameters
@@ -643,10 +643,15 @@ def parse_arguments():
                         help='Show contour indices on visualization')
     parser.add_argument('--show-contour-area', action='store_true', default=False,
                         help='Show contour areas on visualization')
+
+    # OUTPUTS
     parser.add_argument('--save-csv', type=Path, 
                         help='Simpan hasil ke CSV (opsional)')
     parser.add_argument('--save-video', type=Path, 
                         help='Simpan video hasil (opsional)')
+    parser.add_argument('--save-fps', type=Path,
+                        help='Simpan metrik FPS ke file (opsional). Jika .csv maka tulis CSV, selain itu tulis .txt')
+
     parser.add_argument('--max-frames', type=int, 
                         help='Batasi jumlah frame yang diproses (opsional)')  
     parser.add_argument('--hide-original', action='store_true',
@@ -660,6 +665,8 @@ def parse_arguments():
     parser.add_argument('--display-ratio', type=float, default=2.35,
                     help='Aspect ratio (W/H) for display output. Default: 2.35 (cinematic)')
     
+    parser.add_argument('--smooth-coverage', action='store_true',
+                    help='Aktifkan median+moving-average+gate untuk coverage% (opsional)')
     args = parser.parse_args()
     
     return args
@@ -719,13 +726,59 @@ def filter_coverage(raw_cov: float) -> tuple[float, bool]:
         spike = True
     return coverage, spike
 
+# ----------------------
+# FUNGSI FPS
+# ----------------------
+
+def evaluate_fps_from_log(csv_path: str | Path):
+    """Baca log CSV (frame_number, timestamp_ms, ...) dan hitung FPS rata2 serta ms per frame.
+
+    Return: tuple (fps, ms_per_frame, frame_count, total_time_s) atau (None, None, 0, 0.0) jika tidak cukup data.
+    """
+    csv_path = str(csv_path)
+    timestamps = []
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if 'timestamp_ms' in row and row['timestamp_ms'] != '':
+                    try:
+                        ts = float(row['timestamp_ms'])
+                        timestamps.append(ts)
+                    except ValueError:
+                        continue
+    except FileNotFoundError:
+        print(f"CSV tidak ditemukan: {csv_path}")
+        return None, None, 0, 0.0
+
+    return compute_fps_from_timestamps(timestamps)
+
+
+def compute_fps_from_timestamps(timestamps_ms: list[float]):
+    """Hitung FPS dari list timestamp (ms)."""
+    if len(timestamps_ms) < 2:
+        print("Log tidak memiliki data frame yang cukup.")
+        return None, None, 0, 0.0
+    total_time_s = (timestamps_ms[-1] - timestamps_ms[0]) / 1000.0
+    frame_count = len(timestamps_ms)
+    fps = frame_count / total_time_s if total_time_s > 0 else 0.0
+    ms_per_frame = (total_time_s * 1000.0 / frame_count) if frame_count > 0 else 0.0
+    print(f"Total frame: {frame_count}")
+    print(f"Total time (s): {total_time_s:.3f}")
+    print(f"Average FPS: {fps:.2f}")
+    print(f"Average processing time per frame: {ms_per_frame:.2f} ms")
+    return fps, ms_per_frame, frame_count, total_time_s
+
 
 # ----------------------
-# MAIN LOOP (DIUBAH DI BAGIAN FILTER COVERAGE SAJA)
+# MAIN LOOP (DIUBAH DI BAGIAN FILTER COVERAGE SAJA + OPSI SAVE FPS)
 # ----------------------
 
 def main():
     args = parse_arguments()
+    # Reset buffer smoothing coverage di awal run
+    global prev_cov, med_buf, ma_buf
+    med_buf.clear(); ma_buf.clear(); prev_cov = None
     cap = cv.VideoCapture(args.source)
     if not cap.isOpened():
         raise RuntimeError(f"Tidak bisa membuka video: {args.source}")
@@ -739,17 +792,21 @@ def main():
     writer = None
     if args.save_video:
         fourcc = cv.VideoWriter_fourcc(*"mp4v")
-        fps = cap.get(cv.CAP_PROP_FPS) or 25
+        fps_vcap = cap.get(cv.CAP_PROP_FPS) or 25
         w = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
-        writer = cv.VideoWriter(str(args.save_video), fourcc, fps, (w, h))
+        writer = cv.VideoWriter(str(args.save_video), fourcc, fps_vcap, (w, h))
 
     csv_writer = None
+    f_csv = None
     if args.save_csv:
         args.save_csv.parent.mkdir(parents=True, exist_ok=True)
         f_csv = open(args.save_csv, "w", newline="")
         csv_writer = csv.writer(f_csv)
         csv_writer.writerow(["frame_number", "timestamp_ms", "coverage_percent"])
+
+    # kumpulkan timestamp untuk fallback perhitungan FPS walau tanpa CSV
+    timestamps_run_ms: list[float] = []
 
     frame_idx = 0
     while cap.isOpened():
@@ -757,14 +814,17 @@ def main():
         if not ret or (args.max_frames and frame_idx >= args.max_frames):
             break
 
-        ts_ms = int(cap.get(cv.CAP_PROP_POS_MSEC))
+        ts_ms = float(cap.get(cv.CAP_PROP_POS_MSEC))
+        timestamps_run_ms.append(ts_ms)
 
         fg_result = fg.process_frame(frame)
         contour_result = ct.process_mask(fg_result.binary)
         coverage = contour_result.metrics.get("contour_coverage_percent", 0.0)
+        if args.smooth_coverage:
+            coverage, spike = filter_coverage(coverage)
 
         if csv_writer:
-            csv_writer.writerow([frame_idx, ts_ms, f"{coverage:.2f}"])
+            csv_writer.writerow([frame_idx, int(ts_ms), f"{coverage:.2f}"])
 
         disp = ct.visualize(frame, contour_result.contours, {})
 
@@ -791,8 +851,54 @@ def main():
     cap.release()
     if writer:
         writer.release()
-    if csv_writer:
+    if f_csv:
         f_csv.close()
+
+    # ----------------------
+    # SAVE FPS (opsional)
+    # ----------------------
+    if args.save_fps:
+        args.save_fps.parent.mkdir(parents=True, exist_ok=True)
+
+        # Prefer: kalau ada CSV hasil dan bisa dibaca → pakai evaluator dari CSV
+        fps_val = ms_per_frame = None
+        frame_count = 0
+        total_time_s = 0.0
+        used_source = None
+
+        if args.save_csv and Path(args.save_csv).exists():
+            try:
+                fps_val, ms_per_frame, frame_count, total_time_s = evaluate_fps_from_log(args.save_csv)
+                used_source = str(args.save_csv)
+            except Exception as e:
+                print(f"Gagal hitung FPS dari CSV: {e}")
+        
+        # Fallback: pakai timestamps yang dikumpulkan saat run
+        if fps_val is None:
+            fps_val, ms_per_frame, frame_count, total_time_s = compute_fps_from_timestamps(timestamps_run_ms)
+            used_source = "in-memory timestamps"
+
+        # Tulis output
+        if fps_val is not None:
+            src_label = str(args.source)
+            # Jika ekstensi .csv → tulis CSV, selain itu → .txt
+            if args.save_fps.suffix.lower() == '.csv':
+                with open(args.save_fps, 'w', newline='') as f:
+                    w = csv.writer(f)
+                    w.writerow(["source", "frames", "total_time_s", "fps", "ms_per_frame"])
+                    w.writerow([src_label, frame_count, f"{total_time_s:.3f}", f"{fps_val:.2f}", f"{ms_per_frame:.2f}"])
+            else:
+                with open(args.save_fps, 'w', encoding='utf-8') as f:
+                    f.write(f"source: {src_label}\n")
+                    f.write(f"frames: {frame_count}\n")
+                    f.write(f"total_time_s: {total_time_s:.3f}\n")
+                    f.write(f"fps: {fps_val:.2f}\n")
+                    f.write(f"ms_per_frame: {ms_per_frame:.2f}\n")
+
+            print(f"[FPS] Ditulis ke: {args.save_fps} (sumber: {used_source})")
+        else:
+            print("[FPS] Tidak cukup data untuk menghitung FPS.")
+
     cv.destroyAllWindows()
     cv.waitKey(1)
 

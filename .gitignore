@@ -22,3 +22,7 @@
 /assets
 /resource
 /preds/**/**.mp4
+/backups
+**.wpapk
+**.wpaProfile
+**.etl

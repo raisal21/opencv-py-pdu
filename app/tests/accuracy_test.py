@@ -61,7 +61,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--videos-dir", type=Path, required=True, help="Folder of videos")
     p.add_argument("--out-dir", type=Path, required=True, help="Output directory for CSV + reports")
-    p.add_argument("--labels-dir", type=Path, help="Ground‑truth folder (CSV per video); enables evaluation")
     p.add_argument("--coverage-threshold", type=float, default=5.0,
                    help="Coverage %% threshold to classify MATERIAL vs NO_MATERIAL")
     p.add_argument("--bg-preset", default="default", choices=list(BG_PRESETS) + ["all"],
@@ -69,7 +68,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--contour-preset", default="standard", choices=list(CONTOUR_PRESETS) + ["all"],
                    help="Contour preset name or 'all' to test every preset")
     p.add_argument("--n-jobs", type=int, default=max(mp.cpu_count() - 1, 1))
-    p.add_argument("--show", action="store_true", help="Display video windows (disabled for headless)")
+    p.add_argument(
+        "--no-coverage-filter",
+        dest="apply_cov_filter",
+        action="store_false",
+        default=True,
+        help="Disable temporal/spike filtering; use raw coverage values"
+    )
     return p
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -108,7 +113,8 @@ def _reset_filter_state():
     md.prev_cov = None         # type: ignore[attr‑defined]
 
 
-def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float, show: bool) -> Tuple[Path, float]:
+def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float,
+                  apply_filter: bool, show: bool = False) -> Tuple[Path, float]:
     csv_path = _video_pred_path(out_dir, video_path, bg, ct)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -132,18 +138,14 @@ def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float,
                 break
 
             raw_cov = _process_frame(fg, contour_proc, frame)
-            cov, _spike = filter_coverage(raw_cov)  # <‑‑ NEW: apply spike filter
+            if apply_filter:
+                cov, _spike = filter_coverage(raw_cov) 
+            else:
+                cov, _spike = raw_cov, False
             pred_label = int(cov >= thr)
             ts_ms = int(cap.get(cv.CAP_PROP_POS_MSEC))
             writer.writerow([frame_idx, ts_ms, f"{cov:.2f}", pred_label])
 
-            if show:
-                disp = frame.copy()
-                cv.putText(disp, f"Coverage: {cov:.1f}%", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 1.0,
-                           (0, 255, 0) if pred_label else (0, 0, 255), 2)
-                cv.imshow("preview", disp)
-                if cv.waitKey(1) & 0xFF == 27:  # Esc
-                    break
             frame_idx += 1
 
     fps = frame_idx / (time.perf_counter() - start) if frame_idx else 0.0
@@ -151,34 +153,6 @@ def process_video(video_path: Path, out_dir: Path, bg: str, ct: str, thr: float,
     if show:
         cv.destroyAllWindows()
     return csv_path, fps
-
-# ────────────────────────────────────────────────────────────────────────────────
-# Evaluation wrapper (unchanged)
-# ────────────────────────────────────────────────────────────────────────────────
-
-from .accuracy_evaluator import evaluate_pair  # kept import at module level for simplicity
-
-def evaluate_predictions(pred_paths: List[Path], labels_dir: Path, out_dir: Path, thr: float):
-    # body identical to previous revision … (no change needed)
-    try:
-        from .accuracy_evaluator import evaluate_pair  # noqa: local module
-    except ImportError:
-        sys.stderr.write("[WARN] accuracy_evaluator.py not importable; skipping evaluation\n")
-        return
-
-    summary = {}
-    for pred_csv in pred_paths:
-        video_stem = "__".join(pred_csv.stem.split("__")[:1])  # get original video name
-        gt_csv = labels_dir / f"{video_stem}.csv"
-        if not gt_csv.exists():
-            sys.stderr.write(f"[WARN] No GT for {video_stem}\n")
-            continue
-        rpt = evaluate_pair(pred_csv, gt_csv, out_dir, thr)
-        summary[video_stem] = rpt
-
-    if summary:
-        (out_dir / "aggregate_metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-        print("[INFO] aggregate_metrics.json saved")
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Main entrypoint (unchanged apart from note)
@@ -197,7 +171,7 @@ def main():
     for vid in videos:
         for bg in bg_choices:
             for ct in ct_choices:
-                tasks.append((vid, args.out_dir, bg, ct, args.coverage_threshold, args.show))
+                tasks.append((vid, args.out_dir, bg, ct, args.coverage_threshold, args.apply_cov_filter))
 
     print(f"[INFO] Running {len(tasks)} combinations using {args.n_jobs} workers …")
 
@@ -206,9 +180,6 @@ def main():
 
     pred_paths, fps_list = zip(*results)
     print(f"[INFO] Mean FPS: {sum(fps_list)/len(fps_list):.2f}")
-
-    if args.labels_dir:
-        evaluate_predictions(list(pred_paths), args.labels_dir, args.out_dir, args.coverage_threshold)
 
 
 if __name__ == "__main__":

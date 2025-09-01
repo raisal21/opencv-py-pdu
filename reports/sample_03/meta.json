@@ -1,0 +1,29 @@
+{
+  "pred_json": "preds\\sample_03\\ROI_03_quadrant_pred.json",
+  "gt_json": "annotations\\sample_03\\ROI_03_quadrant_gt.json",
+  "num_frames_pred": 18,
+  "num_frames_gt": 18,
+  "num_frames_common": 18,
+  "dropped_pred_only": 0,
+  "dropped_gt_only": 0,
+  "class_order": [
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4"
+  ],
+  "display_labels": {
+    "Q1": "VL (0-25%)",
+    "Q2": "L (25-50%)",
+    "Q3": "M (50-75%)",
+    "Q4": "H (75-100%)"
+  },
+  "roi": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1.0,
+    "h": 1.0,
+    "normalized": true
+  },
+  "notes": "Confusion matrix rows=GT(Q1..Q4), cols=Pred(Q1..Q4). Labels normalized to 1..4."
+}

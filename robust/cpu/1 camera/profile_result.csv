@@ -1,0 +1,31 @@
+func_label,ncalls,cumtime (s),percall (ms),group,description
+stdlib/queue.py - get,71,73.5,13.96,stdlib,Ambil item dari Queue secara blocking
+stdlib/~ - <built-in method builtins.exec>,191,56.0,0.01,stdlib,Interpreter mengeksekusi string kode Python.
+stdlib/__init__.py - <module>,1,56.0,16.71,stdlib,Inisialisasi paket utama aplikasi EyeLog.
+stdlib/~ - <built-in method exec>,1,54.4,9577.53,stdlib,Fungsi bawaan untuk menjalankan blok kode dinamis.
+stdlib/threading.py - wait,81,45.3,3.35,stdlib,Thread menunggu Event/Condition hingga dipicu atau timeout.
+app/camera_detail.py - closeEvent,1,35.5,0.08,app,"Cleanup lengkap saat jendela detail kamera ditutup, termasuk stop StreamWorker."
+app/coverage_logger.py - stop,1,35.5,1.59,app,Menghentikan logger asinkron dan flush CSV log coverage.
+stdlib/threading.py - join,1,35.5,0.04,stdlib,Menunggu thread target selesai sebelum melanjutkan.
+stdlib/~ - <method 'join' of '_thread._ThreadHandle' objects>,1,35.5,0.24,stdlib,Lower level join handle thread di C API.
+stdlib/threading.py - _bootstrap,1,35.5,0.01,stdlib,Rutinitas internal untuk memulai thread Python.
+stdlib/threading.py - _bootstrap_inner,1,35.5,0.07,stdlib,Bagian inti bootstrap yang menjalankan target function.
+app/stream_worker.py - _iteration,382,29.7,0.93,app,"Loop periodik QTimer: baca & proses frame, cek state, handle reconnect."
+dep/~ - <method 'acquire' of '_thread.lock' objects>,360,28.1,23.51,dep,Mengunci mutex/kunci thread safe.
+dep/~ - <built-in method msleep>,115,9.5,61.09,dep,Tidur dalam milidetik di thread Qt (QThread.msleep).
+app/stream_worker.py - _process_frame,250,8.9,1.68,app,Pipeline frame + ekstraksi foreground + kontur + metrik coverage.
+app/roi_window.py - update_preview,1406,8.6,0.13,app,Refresh tampilan pratinjau ROI di overlay UI.
+dep/~ - <method 'exec' of 'PySide6.QtWidgets.QDialog' objects>,4,4.7,1156.69,dep,Menampilkan dialog Qt secara modal & tunggu respon.
+app/material_detector.py - process_frame,250,4.1,0.32,app,Lakukan backgroundâ subtraction + morfologi untuk hasilkan mask biner.
+app/stream_worker.py - _read_with_timeout,266,3.8,0.03,app,Membaca frame cv2.VideoCapture dengan batas waktu aman.
+dep/~ - <built-in method information>,6,3.6,512.71,dep,QMessageBox.information kotak dialog info.
+app/main_window.py - _on_edit_camera_data_loaded,1,3.5,0.09,app,Callback: buka dialog edit setelah data kamera di fetch
+dep/~ - <built-in method fromImage>,1656,3.1,1.89,dep,Konversi QImage QPixmap (Qt).
+dep/~ - <method 'copy' of 'numpy.ndarray' objects>,2760,3.0,0.96,dep,Duplikasi matriks NumPy tanpa pengaruh aslinya.
+dep/~ - <cvtColor>,2406,2.5,0.74,dep,OpenCV cvtColor konversi ruang warna.
+dep/~ - <method 'apply' of 'cv2.BackgroundSubtractorMOG2' objects>,250,2.4,7.02,dep,OpenCV MOG2 apply() hasilkan mask foreground.
+app/material_detector.py - process_mask,250,2.3,0.20,app,Analisis mask biner hitung kontur & statistik coverage.
+app/preview_scheduler.py - run,1,2.0,0.14,app,Thread SnapshotWorker: jadwalkan & ambil snapshot kamera.
+app/preview_scheduler.py - get_capture,1,2.0,0.03,app,Ambil VideoCapture dari pool reuse atau buat baru.
+app/preview_scheduler.py - _create_capture,1,2.0,2003.20,app,Buat VideoCapture baru dengan pengaturan spesifik.
+app/roi_selector.py - _update_display,1416,1.9,0.04,app,Render ulang ROI yang dipilih ke layar selama seleksi.

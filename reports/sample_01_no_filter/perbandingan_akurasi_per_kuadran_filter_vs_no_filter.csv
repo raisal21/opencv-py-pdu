@@ -1,0 +1,5 @@
+Quadrant,Recall_Filter_%,Recall_NoFilter_%,Diff_NoFilter_minus_Filter_pp,GT_Support_N
+Q1,94.52,75.34,-19.18,73
+Q2,90.68,64.05,-26.63,751
+Q3,85.69,72.48,-13.21,992
+Q4,80.21,47.92,-32.29,192

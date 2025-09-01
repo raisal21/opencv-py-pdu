@@ -71,8 +71,11 @@ def run_reviewer(args: argparse.Namespace) -> None:
         if not ok:
             print(f"⚠️  Failed to read frame {frame_no}. Skipping.")
             continue
+        h, w = frame.shape[:2]
+        scale = min(args.max_w / w, args.max_h / h, 1.0)
+        disp = cv.resize(frame, (int(w*scale), int(h*scale)), interpolation=cv.INTER_AREA) if scale < 1.0 else frame
 
-        cv.imshow("quadrant_labeler", frame)
+        cv.imshow("quadrant_labeler", disp)
         cv.waitKey(1)
 
         default_val = mapping[frame_no]
@@ -92,7 +95,8 @@ def run_reviewer(args: argparse.Namespace) -> None:
 
         if new_val != default_val:
             revised[frame_no] = new_val
-
+    
+    cv.namedWindow("quadrant_labeler", cv.WINDOW_AUTOSIZE)
     cap.release()
     cv.destroyAllWindows()
 
@@ -114,6 +118,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--values", nargs="+", default=[1, 2, 3, 4], help="Allowed quadrant values")
     p.add_argument("--max-samples", type=int, default=0, help="Max frames to review; 0 = all")
     p.add_argument("--shuffle", action="store_true", help="Shuffle frame order before applying --max-samples")
+    p.add_argument("--max-w", type=int, default=960, help="Lebar maksimum preview (px)")
+    p.add_argument("--max-h", type=int, default=540, help="Tinggi maksimum preview (px)")
     return p
 
 

@@ -4,6 +4,7 @@ import argparse
 import csv
 from pathlib import Path
 import os
+from statistics import mean, quantiles
 from collections import namedtuple, deque
 
 
@@ -858,46 +859,76 @@ def main():
     # SAVE FPS (opsional)
     # ----------------------
     if args.save_fps:
-        args.save_fps.parent.mkdir(parents=True, exist_ok=True)
+        fps_csv_path = str(args.save_fps)
 
-        # Prefer: kalau ada CSV hasil dan bisa dibaca → pakai evaluator dari CSV
-        fps_val = ms_per_frame = None
-        frame_count = 0
-        total_time_s = 0.0
-        used_source = None
+        if not fps_csv_path.lower().endswith(".csv"):
+            fps_csv_path = str(Path(args.save_fps).with_suffix(".csv"))
 
-        if args.save_csv and Path(args.save_csv).exists():
-            try:
-                fps_val, ms_per_frame, frame_count, total_time_s = evaluate_fps_from_log(args.save_csv)
-                used_source = str(args.save_csv)
-            except Exception as e:
-                print(f"Gagal hitung FPS dari CSV: {e}")
-        
-        # Fallback: pakai timestamps yang dikumpulkan saat run
-        if fps_val is None:
-            fps_val, ms_per_frame, frame_count, total_time_s = compute_fps_from_timestamps(timestamps_run_ms)
-            used_source = "in-memory timestamps"
+        Path(fps_csv_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Tulis output
-        if fps_val is not None:
-            src_label = str(args.source)
-            # Jika ekstensi .csv → tulis CSV, selain itu → .txt
-            if args.save_fps.suffix.lower() == '.csv':
-                with open(args.save_fps, 'w', newline='') as f:
-                    w = csv.writer(f)
-                    w.writerow(["source", "frames", "total_time_s", "fps", "ms_per_frame"])
-                    w.writerow([src_label, frame_count, f"{total_time_s:.3f}", f"{fps_val:.2f}", f"{ms_per_frame:.2f}"])
-            else:
-                with open(args.save_fps, 'w', encoding='utf-8') as f:
-                    f.write(f"source: {src_label}\n")
-                    f.write(f"frames: {frame_count}\n")
-                    f.write(f"total_time_s: {total_time_s:.3f}\n")
-                    f.write(f"fps: {fps_val:.2f}\n")
-                    f.write(f"ms_per_frame: {ms_per_frame:.2f}\n")
+        if timestamps_run_ms:
+            interval_ms = 5000
+            start_ts = timestamps_run_ms[0]
+            end_ts = timestamps_run_ms[-1]
+            current_start = start_ts
 
-            print(f"[FPS] Ditulis ke: {args.save_fps} (sumber: {used_source})")
-        else:
-            print("[FPS] Tidak cukup data untuk menghitung FPS.")
+            rows = []
+            idx = 0
+            n = len(timestamps_run_ms)
+
+            while current_start < end_ts:
+                current_end = current_start + interval_ms
+                window = []
+                while idx < n and timestamps_run_ms[idx] < current_end:
+                    if timestamps_run_ms[idx] >= current_start:
+                        window.append(timestamps_run_ms[idx])
+                    idx += 1
+
+                if len(window) > 1:
+                    duration_s = (window[-1] - window[0]) / 1000.0
+                    fps_val = len(window) / duration_s if duration_s > 0 else 0
+
+                    deltas = [window[i] - window[i-1] for i in range(1, len(window))]
+                    mean_ms = mean(deltas) if deltas else 0
+                    q = quantiles(deltas, n=100) if len(deltas) > 1 else []
+                    p50 = q[49] if len(q) >= 50 else mean_ms
+                    p90 = q[89] if len(q) >= 90 else mean_ms
+                    p95 = q[94] if len(q) >= 95 else mean_ms
+                    p99 = q[98] if len(q) >= 99 else mean_ms
+
+                    ts_start_real = window[0] / 1000.0
+                    ts_end_real = window[-1] / 1000.0
+                else:
+                    fps_val = 0
+                    mean_ms = p50 = p90 = p95 = p99 = 0
+                    ts_start_real = current_start / 1000.0
+                    ts_end_real = current_end / 1000.0
+
+                rows.append([
+                    (current_start - start_ts) / 1000.0,
+                    (current_end - start_ts) / 1000.0,
+                    ts_start_real,
+                    ts_end_real,
+                    len(window),
+                    round(fps_val, 2),
+                    round(mean_ms, 2),
+                    round(p50, 2),
+                    round(p90, 2),
+                    round(p95, 2),
+                    round(p99, 2)
+                ])
+
+                current_start = current_end
+
+            with open(fps_csv_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "interval_start_s", "interval_end_s", "timestamp_start_s", "timestamp_end_s",
+                    "frames", "fps", "mean_ms", "p50", "p90", "p95", "p99"
+                ])
+                writer.writerows(rows)
+
+            print(f"Saved FPS timeseries (5s interval) with real timestamps to {fps_csv_path}")
 
     cv.destroyAllWindows()
     cv.waitKey(1)

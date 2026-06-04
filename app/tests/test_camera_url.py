@@ -1,15 +1,6 @@
-"""
-Unit‑test terpisah untuk Camera.build_stream_url
-Menjaga pemisahan konteks antara database CRUD dan helper URL.
- Jalankan:
-    pytest -q tests/test_camera_url.py
-"""
-
+"""Tests for Camera.build_stream_url."""
 from ..models.camera import Camera
 
-# ---------------------------------------------------------------------------
-# URL Builder tests
-# ---------------------------------------------------------------------------
 
 def test_build_stream_url_without_auth():
     cam = Camera(ip_address="10.1.1.2", port=8554, stream_path="live")

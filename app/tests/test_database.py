@@ -1,42 +1,21 @@
-""" 
-Unit‑test terfokus pada operasi utama DatabaseManager:
-  • add_camera
-  • get_camera  / get_all_cameras
-  • update_camera
-  • delete_camera
-
-Test memakai SQLite file sementara (`tmp_path`) sehingga:
-  – Tidak mengotori database produksi.
-  – Performanya cepat & repeatable.
-
-Jalankan dengan:
-    pytest -q tests/test_database.py
-"""
-
+"""Tests for DatabaseManager CRUD behavior against a temporary SQLite file."""
 import os
 import sqlite3
 import pytest
 
-# Import modul yang diuji
+
 from ..models.database import DatabaseManager
 
-# ---------------------------------------------------------------------------
-# FIXTURES
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def db(tmp_path):
-    """Buat DatabaseManager dan koneksi SQLite sementara."""
+    """Create a DatabaseManager with a temporary SQLite connection."""
     db_file = tmp_path / "unit_db.sqlite"
     manager = DatabaseManager(db_path=os.fspath(db_file))
     conn = DatabaseManager.get_connection(db_path=os.fspath(db_file))
     DatabaseManager.ensure_tables(conn)
     yield manager, conn
     conn.close()
-
-# ---------------------------------------------------------------------------
-# TEST‑CASE PRIORITAS 1
-# ---------------------------------------------------------------------------
 
 def test_add_and_get_camera(db):
     manager, conn = db
@@ -59,7 +38,6 @@ def test_add_and_get_camera(db):
     assert cam["name"] == "Cam1"
     assert cam["ip_address"] == "192.168.0.1"
     assert cam["port"] == 554
-
 
 def test_update_camera(db):
     manager, conn = db
@@ -92,7 +70,6 @@ def test_update_camera(db):
     cam = manager.get_camera(conn, cam_id)
     assert cam["name"] == "CamX‑Renamed"
 
-
 def test_get_all_cameras(db):
     manager, conn = db
     ids = [
@@ -102,8 +79,7 @@ def test_get_all_cameras(db):
     conn.commit()
     cams = manager.get_all_cameras(conn)
     retrieved_ids = {c["id"] for c in cams}
-    assert set(ids) <= retrieved_ids  # semua id yang ditambahkan ada di hasil
-
+    assert set(ids) <= retrieved_ids
 
 def test_delete_camera(db):
     manager, conn = db
@@ -113,12 +89,8 @@ def test_delete_camera(db):
     assert ok is True
     assert manager.get_camera(conn, cam_id) is None
 
-# ---------------------------------------------------------------------------
-# TEST SCHÉMA /MIGRASI
-# ---------------------------------------------------------------------------
-
 def test_schema_tables_created(tmp_path):
-    """Pastikan tabel 'cameras' & 'schema_version' tercipta pada DB baru."""
+    """Verify that 'cameras' and 'schema_version' exist in a new database."""
     db_file = tmp_path / "schema.sqlite"
     conn = DatabaseManager.get_connection(db_path=os.fspath(db_file))
     DatabaseManager.ensure_tables(conn)

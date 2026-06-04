@@ -1,16 +1,15 @@
-# ping_scheduler.py
 import logging
 from PySide6.QtCore import QRunnable, Signal, QObject
 from ..views.add_camera import validate_ip_address
 
-logger = logging.getLogger(__name__) 
+logger = logging.getLogger(__name__)
 
 
 class PingSignal(QObject):
-    finished = Signal(int, bool)        # (camera_id, is_online)
+    finished = Signal(int, bool)
 
 class PingWorker(QRunnable):
-    """TCP‑ping ringan (≤ 500 ms timeout) memakai thread‑pool global."""
+    """Lightweight TCP ping worker for the global thread pool."""
     def __init__(self, camera_id, ip, port, timeout=0.5):
         super().__init__()
         self.camera_id = camera_id

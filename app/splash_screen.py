@@ -5,17 +5,13 @@ from .resources import resource_path
 
 
 def SplashScreen() -> QSplashScreen:
-    """
-    Splash screen dengan ukuran tetap seperti QGIS (500x300), gambar auto-scale.
-    """
-
+    """Create the fixed-size startup splash screen."""
     image_path = resource_path("assets/images/EyelogSplashScreen.png")
     pixmap = QPixmap(image_path)
 
     if pixmap.isNull():
         raise FileNotFoundError(f"Splash image tidak ditemukan: {image_path}")
 
-    # Scale gambar agar pas ke ukuran splash
     splash_size = QSize(700, 500)
     scaled_pixmap = pixmap.scaled(
         splash_size,
@@ -34,7 +30,6 @@ def SplashScreen() -> QSplashScreen:
         color=QColor("#ffffff")
     )
 
-    # Pusatkan splash di layar utama
     screen = QApplication.primaryScreen()
     if screen:
         screen_rect = screen.availableGeometry()

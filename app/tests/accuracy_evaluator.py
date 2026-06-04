@@ -1,39 +1,5 @@
 #!/usr/bin/env python3
-"""
-accuracy_evaluator.py – JSON evaluator (file‑pair mode)
-======================================================
-Evaluates **one prediction / ground‑truth pair at a time** (no more
-*directory scan*).  The script still supports both *binary* and
-*quadrant* label schemes, but you now pass explicit file paths rather
-than pointing to folders.
-
-Example
--------
-```
-python accuracy_evaluator.py \
-  --pred-json ROI_01_binary_pred.json \
-  --gt-json   ROI_01_binary_gt.json   \
-  --mode      binary                  \
-  --out-dir   reports
-```
-
-Key changes vs directory version
---------------------------------
-* `--pred-json` / `--gt-json` (required) – point directly to JSON files.
-* `--mode` still accepts `binary` or `quadrant`.  If omitted, the script
-  infers it from the *pred* filename (contains "binary" → binary etc.).
-* Outputs:
-  * `<stem>_cm.png` – colour‑blind‑friendly confusion matrix
-  * `<stem>_report.json` – classification report from scikit‑learn
-  * *aggregate.json* – a single‑element list capturing metrics for this
-    run (keeps downstream tooling unchanged)
-
-Dependencies
-============
-```
-pip install numpy scikit-learn matplotlib
-```
-"""
+"""Evaluate one prediction JSON file against one ground-truth JSON file."""
 from __future__ import annotations
 
 import argparse, json, logging
@@ -45,15 +11,11 @@ from sklearn.metrics import (accuracy_score, classification_report,
                              confusion_matrix)
 
 import matplotlib
-matplotlib.use("Agg")  # headless
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s")
-
-# ────────────────────────────────────────────────────────────────────────────────
-# I/O helpers
-# ────────────────────────────────────────────────────────────────────────────────
 
 def _read_mapping(path: Path) -> Dict[int, int]:
     """Return mapping {frame:int → label:int}."""
@@ -61,17 +23,12 @@ def _read_mapping(path: Path) -> Dict[int, int]:
         d = json.load(f)
     return {int(k): int(v) for k, v in d.items()}
 
-
 def _align_frames(pred_map: Dict[int, int], gt_map: Dict[int, int]) -> Tuple[np.ndarray, np.ndarray]:
     common = sorted(set(pred_map) & set(gt_map))
     if not common:
         raise ValueError("No overlapping frames between prediction & GT.")
     return (np.fromiter((pred_map[f] for f in common), dtype=int),
             np.fromiter((gt_map[f] for f in common), dtype=int))
-
-# ────────────────────────────────────────────────────────────────────────────────
-# Plotting
-# ────────────────────────────────────────────────────────────────────────────────
 
 def _save_confusion_matrix(cm: np.ndarray, class_names: List[str], out_png: Path, mode: str):
     palette = {
@@ -103,10 +60,6 @@ def _save_confusion_matrix(cm: np.ndarray, class_names: List[str], out_png: Path
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, bbox_inches="tight")
     plt.close(fig)
-
-# ────────────────────────────────────────────────────────────────────────────────
-# Evaluation
-# ────────────────────────────────────────────────────────────────────────────────
 
 def _evaluate(pred_json: Path, gt_json: Path, out_dir: Path, mode: str):
     logging.info("Evaluating %s", pred_json.name)
@@ -143,10 +96,6 @@ def _evaluate(pred_json: Path, gt_json: Path, out_dir: Path, mode: str):
 
     return {"file": pred_json.name, "mode": mode_, "accuracy": acc, "report": report}
 
-# ────────────────────────────────────────────────────────────────────────────────
-# CLI
-# ────────────────────────────────────────────────────────────────────────────────
-
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Evaluate EyeLog predictions vs ground‑truth (JSON)",
@@ -159,7 +108,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", default="reports", help="Folder for PNG/JSON outputs")
     return p
 
-
 def main():
     args = _build_parser().parse_args()
     pred_json = Path(args.pred_json).expanduser()
@@ -169,10 +117,8 @@ def main():
 
     result = _evaluate(pred_json, gt_json, out_dir, args.mode)
 
-    # keep downstream pipeline unchanged – wrap in list
     (out_dir / "aggregate.json").write_text(json.dumps([result], indent=2), encoding="utf-8")
     logging.info("Finished. Outputs saved in %s", out_dir.resolve())
-
 
 if __name__ == "__main__":
     main()

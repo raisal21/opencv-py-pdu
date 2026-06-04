@@ -4,36 +4,31 @@ import os
 import logging
 from pathlib import Path
 
-# Inisialisasi logger
+
 logger = logging.getLogger(__name__)
 
-# Konfigurasi path database
+
 BASE_DIR = Path(os.getenv('LOCALAPPDATA', Path.home())) / 'EyeLog'
 BASE_DIR.mkdir(exist_ok=True)
 DB_PATH = BASE_DIR / 'eyelog_database.db'
 
 class DatabaseManager:
-    """
-    Kelas untuk mengelola operasi database.
-    CATATAN: Kelas ini sekarang TIDAK mengelola koneksi. Koneksi harus
-    disediakan oleh pemanggil (misalnya, DBWorker).
-    """
-
+    """Database operations for cameras and schema setup. Connections are supplied by the caller."""
     def __init__(self, db_path=DB_PATH):
-        """Hanya menyimpan path, tidak membuat koneksi."""
+        """Store the database path without opening a connection."""
         self.db_path = db_path
-    
+
     @staticmethod
     def get_connection(db_path=DB_PATH):
-        """Membuat dan mengembalikan koneksi database baru."""
+        """Open a SQLite connection for the given database path."""
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        conn = sqlite3.connect(db_path, timeout=10) # Timeout untuk mencegah lock
+        conn = sqlite3.connect(db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         return conn
 
     @staticmethod
     def ensure_tables(conn):
-        """Memastikan tabel yang diperlukan sudah ada menggunakan koneksi yang diberikan."""
+        """Create required tables when they do not exist."""
         cursor = conn.cursor()
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS cameras (
@@ -50,9 +45,6 @@ class DatabaseManager:
         )''')
         conn.commit()
 
-    # --- Metode Operasi CRUD ---
-    # Setiap metode sekarang menerima 'conn' sebagai argumen pertama
-
     def add_camera(self, conn, name, ip_address, port=554, protocol="RTSP", username="", password="", stream_path="stream1", url="", resolution=(640, 480), roi_points=None):
         cursor = conn.cursor()
         cursor.execute('''
@@ -64,8 +56,8 @@ class DatabaseManager:
     def update_camera(self, conn, camera_id, name, ip_address, port=554, protocol="RTSP", username="", password="", stream_path="stream1", url="", resolution=(640, 480)):
         cursor = conn.cursor()
         cursor.execute('''
-            UPDATE cameras 
-            SET name = ?, ip_address = ?, port = ?, protocol = ?, username = ?, 
+            UPDATE cameras
+            SET name = ?, ip_address = ?, port = ?, protocol = ?, username = ?,
                 password = ?, stream_path = ?, url = ?, resolution_width = ?, resolution_height = ?
             WHERE id = ?
         ''', (name, ip_address, port, protocol, username, password, stream_path, url, resolution[0], resolution[1], camera_id))
@@ -88,7 +80,7 @@ class DatabaseManager:
                     camera['roi_points'] = [tuple(p) for p in json.loads(camera['roi_points'])]
                 except (json.JSONDecodeError, TypeError):
                     logger.warning(f"Could not parse ROI points for camera ID {camera.get('id')}")
-                    camera['roi_points'] = None # Set ke None jika gagal parse
+                    camera['roi_points'] = None
             cameras.append(camera)
         return cameras
 

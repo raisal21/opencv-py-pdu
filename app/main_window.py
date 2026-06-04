@@ -25,7 +25,7 @@ class DeleteCameraDialog(QDialog):
     """Confirmation dialog for deleting a camera."""
     def __init__(self, camera_name, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Konfirmasi Hapus")
+        self.setWindowTitle("Delete Camera")
         self.setFixedSize(400, 200)
         self.setStyleSheet("""
             QDialog {
@@ -50,14 +50,14 @@ class DeleteCameraDialog(QDialog):
         icon_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_label)
 
-        message = QLabel(f"Apakah Anda yakin ingin menghapus kamera\n'{camera_name}'?\n\nTindakan ini tidak dapat dibatalkan.")
+        message = QLabel(f"Are you sure you want to delete this camera\n'{camera_name}'?\n\nThis action cannot be undone.")
         message.setAlignment(Qt.AlignCenter)
         message.setStyleSheet("font-size: 14px; margin: 5px;")
         layout.addWidget(message)
 
         button_layout = QHBoxLayout()
 
-        cancel_button = QPushButton("Batal")
+        cancel_button = QPushButton("Cancel")
         cancel_button.setStyleSheet("""
             QPushButton {
                 background-color: #3F3F46;
@@ -70,7 +70,7 @@ class DeleteCameraDialog(QDialog):
         """)
         cancel_button.clicked.connect(self.reject)
 
-        delete_button = QPushButton("Hapus")
+        delete_button = QPushButton("Delete")
         delete_button.setStyleSheet("""
             QPushButton {
                 background-color: #DC2626;
@@ -480,7 +480,7 @@ class CameraList(QWidget):
     def _get_added_camera_data(self, camera_id: int):
         """Load the full database row for a newly added camera."""
         if not camera_id:
-            QMessageBox.warning(self, "Database Error", "Gagal mendapatkan ID untuk kamera baru.")
+            QMessageBox.warning(self, "Database Error", "Failed to get the new camera ID.")
             return
 
         signals = DBSignals()
@@ -495,7 +495,7 @@ class CameraList(QWidget):
     def _on_camera_added(self, camera_data: dict):
         """Add the newly created camera to the UI."""
         if not camera_data:
-            QMessageBox.warning(self, "Database Error", "Gagal mengambil data kamera yang baru ditambahkan.")
+            QMessageBox.warning(self, "Database Error", "Failed to load the newly added camera.")
             return
         if self.empty_label and self.empty_label.isVisible():
             self.empty_label.setVisible(False)

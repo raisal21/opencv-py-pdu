@@ -94,7 +94,7 @@ class ROISelectorDialog(QDialog):
         instructions_layout = QHBoxLayout(instructions_frame)
         instructions_layout.setContentsMargins(20, 0, 20, 0)
 
-        instructions_label = QLabel("Klik untuk memilih titik. Buat persegi panjang dengan memilih 3 titik. Titik keempat akan ditentukan otomatis.")
+        instructions_label = QLabel("Click to select points. Select 3 points; the fourth point is calculated automatically.")
         instructions_label.setStyleSheet("color: #A1A1AA; font-size: 13px;")
         instructions_layout.addWidget(instructions_label)
 

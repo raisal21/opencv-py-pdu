@@ -196,13 +196,13 @@ class ROISelector:
     def _add_instructions(self, image):
         """Add instruction text based on current state."""
         if self.is_complete() and not self.is_confirmed():
-            text = "Tekan ENTER untuk konfirmasi atau klik kanan untuk mulai ulang"
+            text = "Press ENTER to confirm, or right-click to start over"
         elif self.selection_state == self.STATE_POINT1:
-            text = "Klik untuk memilih titik pertama"
+            text = "Click to select the first point"
         elif self.selection_state == self.STATE_POINT2:
-            text = "Klik untuk memilih titik kedua"
+            text = "Click to select the second point"
         elif self.selection_state == self.STATE_POINT3:
-            text = "Klik untuk memilih titik ketiga (akan dibuat persegi panjang)"
+            text = "Click to select the third point and create a rectangle"
         else:
             return
 

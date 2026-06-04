@@ -10,7 +10,7 @@ def SplashScreen() -> QSplashScreen:
     pixmap = QPixmap(image_path)
 
     if pixmap.isNull():
-        raise FileNotFoundError(f"Splash image tidak ditemukan: {image_path}")
+        raise FileNotFoundError(f"Splash image not found: {image_path}")
 
     splash_size = QSize(700, 500)
     scaled_pixmap = pixmap.scaled(

@@ -62,7 +62,7 @@ def run_reviewer(args: argparse.Namespace) -> None:
             if answer.isdigit() and int(answer) in allowed_vals:
                 new_val = int(answer)
                 break
-            print(f"Input tidak valid. Masukkan salah satu dari {allowed_vals} atau tekan Enter.")
+            print(f"Invalid input. Enter one of {allowed_vals} or press Enter.")
 
         if new_val != default_val:
             revised[frame_no] = new_val

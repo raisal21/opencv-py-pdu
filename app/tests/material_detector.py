@@ -656,7 +656,7 @@ def main():
     args = parse_arguments()
     cap = cv.VideoCapture(args.source)
     if not cap.isOpened():
-        raise RuntimeError(f"Tidak bisa membuka video: {args.source}")
+        raise RuntimeError(f"Cannot open video: {args.source}")
 
     if args.width: cap.set(cv.CAP_PROP_FRAME_WIDTH, args.width)
     if args.height: cap.set(cv.CAP_PROP_FRAME_HEIGHT, args.height)

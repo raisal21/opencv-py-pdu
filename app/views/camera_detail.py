@@ -610,16 +610,16 @@ class CameraDetailUI(QMainWindow):
                 return
 
             if result:
-                 QMessageBox.information(self, "ROI Diperbarui", "Region of interest telah berhasil diperbarui di database.")
+                 QMessageBox.information(self, "ROI Updated", "The region of interest was updated in the database.")
             else:
-                 QMessageBox.warning(self, "Gagal Memperbarui", "Gagal memperbarui ROI di database. Lihat log untuk detail.")
+                 QMessageBox.warning(self, "Update Failed", "Failed to update the ROI in the database. Check the log for details.")
 
         def on_db_error(error_message):
             if self._is_closing:
                 logger.warning(f"DB Error occurred but window is closing: {error_message}")
                 return
 
-            QMessageBox.critical(self, "Kesalahan Database", f"Terjadi kesalahan saat mengakses database:\n{error_message}")
+            QMessageBox.critical(self, "Database Error", f"An error occurred while accessing the database:\n{error_message}")
             logger.error(error_message)
 
         self.db_signals.finished.connect(on_db_finished)

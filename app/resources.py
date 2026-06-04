@@ -11,7 +11,7 @@ def resource_path(relative: str) -> str:
         elif getattr(sys, 'frozen', False):
             base_path = Path(sys.executable).resolve().parent
         else:
-            base_path = Path(__file__).resolve().parent.parent
+            base_path = Path(__file__).resolve().parent
     except Exception:
         base_path = Path.cwd()
 
